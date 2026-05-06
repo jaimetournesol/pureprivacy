@@ -1,0 +1,37 @@
+# PurePrivacy tor configuration.
+# Two roles: (1) host the hidden service for inbound client/federation
+# traffic, (2) act as a SOCKS proxy for Synapse's outbound federation.
+
+User tor
+DataDirectory /var/lib/tor
+PidFile /var/lib/tor/tor.pid
+
+# SOCKS proxy reachable from other containers on the pureprivacy_net.
+SocksPort 0.0.0.0:9050
+
+# Hidden service.  Maps the .onion to the in-network services.
+HiddenServiceDir /var/lib/tor/pureprivacy
+HiddenServiceVersion 3
+HiddenServicePort 80   172.30.0.10:8008
+HiddenServicePort 8008 172.30.0.10:8008
+HiddenServicePort 8448 172.30.0.10:8008
+HiddenServicePort 3478 172.30.0.11:3478
+HiddenServicePort 5349 172.30.0.11:5349
+# Coturn TCP relay range — must match the range in coturn's turnserver.conf.
+HiddenServicePort 49152 172.30.0.11:49152
+HiddenServicePort 49153 172.30.0.11:49153
+HiddenServicePort 49154 172.30.0.11:49154
+HiddenServicePort 49155 172.30.0.11:49155
+HiddenServicePort 49156 172.30.0.11:49156
+HiddenServicePort 49157 172.30.0.11:49157
+HiddenServicePort 49158 172.30.0.11:49158
+HiddenServicePort 49159 172.30.0.11:49159
+HiddenServicePort 49160 172.30.0.11:49160
+HiddenServicePort 49161 172.30.0.11:49161
+# MatrixRTC (only useful when the `voice` profile is active; harmless otherwise).
+HiddenServicePort 7880  172.30.0.12:7880
+HiddenServicePort 7881  172.30.0.12:7881
+HiddenServicePort 8082  lk-jwt:8080
+
+Log notice stdout
+SafeLogging 1

@@ -1,0 +1,27 @@
+# PurePrivacy privoxy config.  Sole job: take HTTP CONNECT requests from
+# Synapse's federation client and forward them through Tor's SOCKS5.
+#
+# Synapse sets HTTPS_PROXY=http://privoxy:8118; privoxy uses forward-socks5
+# to relay through tor:9050; tor relays to the .onion network.
+
+confdir /etc/privoxy
+logdir /var/log/privoxy
+listen-address 0.0.0.0:8118
+
+# Forward all .onion traffic through tor's SOCKS proxy.  Privoxy has a
+# special-case for `.onion` to avoid leaking via clearnet DNS.
+forward-socks5t .onion tor:9050 .
+
+# All other traffic also goes through tor, in case anyone configures a
+# clearnet peer for federation later.  Comment this line out if you want
+# clearnet federation to bypass tor.
+forward-socks5t / tor:9050 .
+
+# Defensive defaults.
+toggle 1
+enable-remote-toggle 0
+enable-remote-http-toggle 0
+enable-edit-actions 0
+buffer-limit 4096
+permit-access pureprivacy_net
+hostname privoxy

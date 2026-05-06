@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+{% block title %}Ready{% endblock %}
+{% block body %}
+<p class="muted">Your PurePrivacy box is ready.  Connect your phone, save
+your recovery key, then add people and connect your agent below.</p>
+
+<div class="alert info">
+  <b>Save the password and recovery key now.</b>  They're shown again any
+  time you sign back in, but treat this like setting up a password manager:
+  if you lose both, the only path forward is <code>pureprivacy reset</code>
+  (which wipes the box).
+</div>
+
+<h2>Connect your phone</h2>
+<p>Install <a href="https://element.io/download" target="_blank">Element</a>
+(the original — <b>recommended for v0.1</b>) on iOS or Android, plus
+<a href="https://orbot.app/" target="_blank">Orbot</a> (Android) or
+<a href="https://onionbrowser.com/" target="_blank">Onion Browser</a> (iOS)
+to route Element through Tor.  Sign in with the credentials below.</p>
+<p class="muted">Element X also works but its sliding-sync over Tor is
+rougher in v0.1 — see <code>docs/phone-setup.md</code>.  Element will warn
+that the homeserver uses HTTP, not HTTPS — that's expected for
+<code>.onion</code> services; accept and continue.</p>
+
+<div class="row">
+  <div>
+    <div class="field"><b>Homeserver</b><pre class="copyable">http://{{ onion }}</pre></div>
+    <div class="field"><b>Username</b><pre class="copyable">{{ admin_user }}</pre></div>
+    <div class="field">
+      <b>Password</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:6px 0;">Click to reveal</summary>
+        <pre class="copyable">{{ admin_password }}</pre>
+      </details>
+    </div>
+  </div>
+  <div>
+    <p class="muted">Or scan this QR with any reader to copy the same info.</p>
+    <div class="qr"><img src="{{ qr_data_url }}" alt="phone-onboarding QR"></div>
+  </div>
+</div>
+
+<hr>
+
+{% if recovery_passphrase %}
+<h2>Recovery key</h2>
+<p class="muted">If you ever forget the admin password, this key resets it
+without wiping the box.  <b>Write it down somewhere safe</b> — a password
+manager, or a piece of paper in your wallet.  Without both the password
+and this key, you'll have to <code>pureprivacy reset</code> and start over.</p>
+<div class="field">
+  <b>Recovery key</b>
+  <details>
+    <summary class="muted" style="cursor:pointer;padding:6px 0;">Click to reveal</summary>
+    <pre class="copyable">{{ recovery_passphrase }}</pre>
+  </details>
+</div>
+<p class="muted">When you need it, run on the host:
+  <code>pureprivacy admin reset-password "&lt;your-recovery-key&gt;"</code></p>
+
+<hr>
+{% endif %}
+
+<h2>People on this box</h2>
+<p class="muted">Add friends and family so they can have their own accounts
+on your homeserver — they get a username, password, and a QR you can show
+them to sign in.</p>
+<p><a class="btn" href="/people">Manage people</a></p>
+
+<hr>
+
+<h2>Federation</h2>
+<p class="muted">Pair this box with another PurePrivacy box so users on
+either side can join rooms hosted by the other.</p>
+<p>{% if peers %}<b>{{ peers|length }} peer{% if peers|length != 1 %}s{% endif %} paired:</b>
+{% for p in peers %}<code>{{ p.onion[:16] }}…</code>{% if not loop.last %}, {% endif %}{% endfor %}
+{% else %}No peers yet.{% endif %}</p>
+<p><a class="btn ghost" href="/pair">Manage federation</a></p>
+
+<hr>
+
+<h2>Connect your agent</h2>
+<p>Add this MCP endpoint to Claude Code, Codex, Cursor, Cline, or anything
+that speaks MCP.  See <code>docs/mcp-integration.md</code> for paste-ready
+config snippets.</p>
+
+<div class="field"><b>MCP endpoint (loopback)</b><pre class="copyable">http://127.0.0.1:8089/mcp</pre></div>
+<div class="field">
+  <b>Bearer token</b>
+  <details>
+    <summary class="muted" style="cursor:pointer;padding:6px 0;">Click to reveal</summary>
+    <pre class="copyable">{{ mcp_token }}</pre>
+  </details>
+</div>
+<div class="field"><b>Bot Matrix ID</b><pre class="copyable">{{ mcp_user }}</pre></div>
+
+<p class="muted">Invite the bot to any room you want your agent to be able to
+read or post in.  E2EE rooms also need you to verify the bot's device once,
+inside Element.</p>
+
+{% if mcp_grace_remaining_s and mcp_grace_remaining_s > 0 %}
+<div class="alert">
+  <b>Previous token still accepted for ~{{ (mcp_grace_remaining_s // 60) }} min {{ mcp_grace_remaining_s % 60 }} s.</b>
+  Reconfigure your agents with the new token above; once the window closes
+  the old token starts returning 403.
+</div>
+<form method="post" action="/revoke-prev-token"
+      data-confirm="Revoke the previous token immediately?  Any agent still using it will start getting 403s on its next request.">
+  <button type="submit" class="danger">Revoke previous token now</button>
+</form>
+{% endif %}
+
+<form method="post" action="/rotate-token"
+      data-confirm="Rotate the MCP token?  The new token is shown immediately; the old token keeps working for 10 minutes so your agents can migrate.">
+  <button type="submit" class="danger">Rotate MCP token</button>
+</form>
+<p class="muted">Rotation gives you a 10-minute grace window: the old token
+keeps working while you reconfigure agents.  Use <i>Revoke previous token now</i>
+above to cut it off immediately.</p>
+{% endblock %}

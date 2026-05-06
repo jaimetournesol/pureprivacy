@@ -1,0 +1,53 @@
+# Secrets and runtime data
+.env
+.env.local
+*.key
+*.pem
+*.crt
+data/
+volumes/
+*.sqlite
+*.sqlite3
+*.db
+
+# Setup wizard sentinels and generated config
+.setup-complete
+homeserver.yaml
+*-signing.key
+*-signing.key.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Local-only test artifacts
+tests/.tmp/
+*.log
+
+# Old code, retained as reference, never shipped
+oldcode/

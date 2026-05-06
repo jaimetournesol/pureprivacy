@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% set active = "pair" %}
+{% block title %}Pair with another box{% endblock %}
+{% block body %}
+<p class="muted"><a href="/" style="color:var(--accent);">← back</a></p>
+
+<h2 style="margin-top:0;">Pair with another PurePrivacy box</h2>
+<p class="muted">Each box generates a short-lived pair code (15 minutes).
+Show your peer your code, paste theirs into the box below, and the two
+homeservers will be in each other's federation allowlist.</p>
+
+<h2>Your pair code</h2>
+<div class="row" data-pair-expires="{{ pair_expires_at }}">
+  <div>
+    <div class="field"><b>For your peer to scan or paste:</b><pre class="copyable">{{ pair_blob }}</pre></div>
+    <p class="muted">
+      Expires in <b class="pair-countdown">--:--</b>.  Reloading this page
+      shows the <i>same</i> code — your peer can use it any time before it
+      expires.  To invalidate it and mint a new one:
+    </p>
+    <form method="post" action="/pair/regenerate" style="margin:0;"
+          data-confirm="Generate a new code?  The current one will stop working immediately, even if your peer hasn't used it yet.">
+      <button type="submit" class="ghost small">Regenerate code</button>
+    </form>
+  </div>
+  <div>
+    <div class="qr"><img src="{{ pair_qr }}" alt="pair QR"></div>
+  </div>
+</div>
+
+<hr>
+
+<h2>Accept a peer's code</h2>
+<form method="post" action="/pair/accept"
+      onsubmit="const b = this.querySelector('button'); b.textContent = 'Pairing & restarting Synapse…'; setTimeout(() => { b.disabled = true; }, 0);">
+  <label for="pair_code">Paste their code here</label>
+  <textarea id="pair_code" name="pair_code" rows="4"
+            style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-family:ui-monospace,monospace;"
+            required></textarea>
+  <button type="submit">Accept</button>
+</form>
+
+<hr>
+
+<h2>Currently paired peers</h2>
+{% if peers %}
+<ul style="list-style:none;padding:0;">
+{% for p in peers %}
+  <li class="field" style="display:flex;align-items:center;gap:12px;">
+    <pre class="copyable" style="flex:1;margin:0;">{{ p.onion }}</pre>
+    <form method="post" action="/pair/remove" style="margin:0;"
+          data-confirm="Unpair {{ p.onion }}?  Synapse will restart and rooms federated with this peer will stop working."
+          onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Restarting Synapse…';">
+      <input type="hidden" name="onion" value="{{ p.onion }}">
+      <button type="submit" class="danger small">Remove</button>
+    </form>
+  </li>
+{% endfor %}
+</ul>
+<p class="muted">Adding or removing a peer restarts Synapse automatically (~10–30 seconds).</p>
+{% else %}
+<p class="muted">No peers yet.  Adding one restarts Synapse automatically (~10–30 seconds).</p>
+{% endif %}
+{% endblock %}

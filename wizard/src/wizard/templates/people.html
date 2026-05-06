@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}People{% endblock %}
+{% block body %}
+<h2 style="margin-top:0;">People on this box</h2>
+<p class="muted">Each person below has a Matrix account on your homeserver.
+Add a person to give them their own account; reset a password to issue them
+a fresh one (their existing devices get logged out); remove deactivates the
+account on Synapse.</p>
+
+<p><a class="btn" href="/people/add">Add a person</a></p>
+
+<div style="margin-top:16px;">
+{% for u in users if u.user_id != mcp_user %}
+  <div class="person">
+    <div class="name">
+      <b>{{ u.user_id }}</b>
+      {% if u.user_id == admin_user %}<span class="tag admin">admin (you)</span>{% endif %}
+      {% if u.admin and u.user_id != admin_user %}<span class="tag admin">admin</span>{% endif %}
+      {% if u.deactivated %}<span class="tag deactivated">deactivated</span>{% endif %}
+      {% if u.display_name and u.display_name != u.user_id.split(":")[0].lstrip("@") %}
+      <div class="muted" style="font-size:13px;">{{ u.display_name }}</div>
+      {% endif %}
+    </div>
+    <div class="actions">
+      {% if not u.deactivated %}
+      <form method="post"
+            action="/people/{{ u.user_id.split(':')[0].lstrip('@') }}/reset-password"
+            data-confirm="Reset the password for {{ u.user_id }}?  All their existing devices will be signed out and they'll need the new password to log back in.">
+        <button type="submit" class="ghost small">Reset password</button>
+      </form>
+      {% if u.user_id != admin_user %}
+      <form method="post"
+            action="/people/{{ u.user_id.split(':')[0].lstrip('@') }}/remove"
+            data-confirm="Deactivate {{ u.user_id }}?  Their account will be erased on Synapse — they will not be able to sign back in.">
+        <button type="submit" class="danger small">Remove</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+{% endfor %}
+</div>
+
+<hr>
+
+<h2 style="margin-top:24px;">System accounts</h2>
+<p class="muted">These accounts back PurePrivacy itself; they're managed
+by the appliance and can't be deactivated from this page.</p>
+
+{% for u in users if u.user_id == mcp_user %}
+<div class="person">
+  <div class="name">
+    <b>{{ u.user_id }}</b>
+    <span class="tag">MCP bot</span>
+    <div class="muted" style="font-size:13px;">Reads and writes messages on
+    behalf of your AI agent.  Invite it to a room to give your agent access
+    to that room.</div>
+  </div>
+</div>
+{% endfor %}
+
+<hr>
+
+<p class="muted">Tip: deactivated accounts can never be reused — Synapse keeps
+the localpart reserved.  Pick fresh names instead of recycling.</p>
+{% endblock %}

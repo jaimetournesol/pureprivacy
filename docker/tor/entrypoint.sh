@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Tor entrypoint: ensure hidden-service directory has the right ownership
+# and mode, start tor, and publish the resulting .onion hostname into
+# /shared/onion_hostname so that Synapse and the wizard can read it.
+set -euo pipefail
+
+HSDIR="/var/lib/tor/pureprivacy"
+SHARED="${SHARED:-/shared}"
+
+mkdir -p "${HSDIR}"
+chown -R tor:tor /var/lib/tor
+chmod 0700 "${HSDIR}"
+
+mkdir -p "${SHARED}"
+
+start_publisher() {
+    # Wait for tor to mint the hostname, then copy it to the shared volume.
+    # Re-run on each container start to keep the file fresh even if it was
+    # accidentally deleted from /shared.
+    local i=0
+    while [[ ! -s "${HSDIR}/hostname" ]]; do
+        i=$((i + 1))
+        if [[ $i -gt 60 ]]; then
+            echo "tor: timed out waiting for hostname" >&2
+            return 1
+        fi
+        sleep 1
+    done
+    local host
+    host="$(tr -d '[:space:]' < "${HSDIR}/hostname")"
+    if [[ -z "${host}" ]]; then
+        echo "tor: empty hostname" >&2
+        return 1
+    fi
+    printf '%s\n' "${host}" > "${SHARED}/onion_hostname"
+    chmod 0644 "${SHARED}/onion_hostname"
+    echo "tor: published ${host} to ${SHARED}/onion_hostname"
+}
+
+start_publisher &
+
+exec tor -f /etc/tor/torrc

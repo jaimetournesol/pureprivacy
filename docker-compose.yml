@@ -1,0 +1,315 @@
+# PurePrivacy 0.1 — Tor-only Matrix appliance.
+#
+# Bring everything up with `docker compose up -d`. First-boot wizard lives at
+# http://127.0.0.1:${WIZARD_PORT:-8088} (loopback only). See README.md for the
+# full UX.
+#
+# The only thing bound to the host is the loopback wizard (and loopback MCP).
+# There is no clearnet exposure path: federation rides Tor via privoxy, voice
+# (optional `voice` profile) rides Tor via the synapse-fed-proxy sidecar.
+#
+# Naming: every resource is prefixed `pureprivacy-` (containers) or
+# `pureprivacy_` (volumes/network) so the stack does not collide with anything
+# else running on the same Docker host.
+
+name: pureprivacy
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+services:
+  # One-shot: generates secrets into the shared volume on first boot.
+  # Idempotent: subsequent runs are no-ops if the secret files already exist.
+  init:
+    container_name: pureprivacy-init
+    build:
+      context: ./docker/init
+    image: pureprivacy/init:0.1.0
+    restart: "no"
+    volumes:
+      - shared:/shared
+    networks:
+      - pureprivacy_net
+
+  tor:
+    <<: *default-restart
+    container_name: pureprivacy-tor
+    build:
+      context: ./docker/tor
+    image: pureprivacy/tor:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - tor_data:/var/lib/tor
+      - shared:/shared
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      test: ["CMD", "test", "-s", "/shared/onion_hostname"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 60s
+
+  privoxy:
+    <<: *default-restart
+    container_name: pureprivacy-privoxy
+    build:
+      context: ./docker/privoxy
+    image: pureprivacy/privoxy:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f privoxy >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  postgres:
+    <<: *default-restart
+    container_name: pureprivacy-postgres
+    image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      # Postgres image reads any env var from a file when given a *_FILE
+      # suffix.  We point at the secrets directory the init container fills.
+      POSTGRES_PASSWORD_FILE: /run/secrets-shared/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - shared:/run/secrets-shared:ro
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  synapse:
+    <<: *default-restart
+    container_name: pureprivacy-synapse
+    build:
+      context: ./docker/synapse
+      args:
+        SYNAPSE_IMAGE_TAG: ${SYNAPSE_IMAGE_TAG:-v1.122.0}
+    image: pureprivacy/synapse:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      privoxy:
+        condition: service_healthy
+    environment:
+      # Federation traffic (and only federation traffic) goes through tor.
+      HTTPS_PROXY: "http://privoxy:8118"
+      HTTP_PROXY: "http://privoxy:8118"
+      NO_PROXY: "localhost,127.0.0.1,postgres,coturn,wizard,mcp,172.30.0.0/24"
+    volumes:
+      - synapse_data:/data
+      - shared:/shared:ro
+    networks:
+      pureprivacy_net:
+        ipv4_address: 172.30.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8008/_matrix/client/versions"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+  coturn:
+    <<: *default-restart
+    container_name: pureprivacy-coturn
+    build:
+      context: ./docker/coturn
+    image: pureprivacy/coturn:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - shared:/shared:ro
+    networks:
+      pureprivacy_net:
+        ipv4_address: 172.30.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 3478 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 60s
+
+  wizard:
+    <<: *default-restart
+    container_name: pureprivacy-wizard
+    build:
+      context: ./wizard
+    image: pureprivacy/wizard:0.1.0
+    depends_on:
+      synapse:
+        condition: service_healthy
+    environment:
+      WIZARD_HOST: 0.0.0.0
+      WIZARD_PORT: 8088
+      SYNAPSE_URL: http://synapse:8008
+      SHARED_DIR: /shared
+      SYNAPSE_CONTAINER: pureprivacy-synapse
+      # Grace window after MCP token rotation during which the previous
+      # token is still accepted.  Wizard surfaces a countdown; mcp middleware
+      # honors it.  Both sides MUST agree on this value.
+      MCP_TOKEN_GRACE_SECONDS: ${MCP_TOKEN_GRACE_SECONDS:-600}
+    ports:
+      - "127.0.0.1:${WIZARD_PORT:-8088}:8088"
+    volumes:
+      - shared:/shared
+      # Mounted so the wizard can restart Synapse after a federation pairing
+      # change (the federation_domain_whitelist is read at Synapse startup).
+      # Wizard is loopback-only, but if you remap WIZARD_PORT to a network
+      # interface, be aware: this socket is the host's docker control plane.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8088/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  livekit:
+    <<: *default-restart
+    container_name: pureprivacy-livekit
+    profiles: ["voice"]
+    build:
+      context: ./docker/livekit
+    image: pureprivacy/livekit:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - shared:/shared:ro
+    networks:
+      pureprivacy_net:
+        ipv4_address: 172.30.0.12
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7880/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  synapse-fed-proxy:
+    <<: *default-restart
+    container_name: pureprivacy-synapse-fed-proxy
+    profiles: ["voice"]
+    build:
+      context: ./docker/synapse-fed-proxy
+    image: pureprivacy/synapse-fed-proxy:0.1.0
+    depends_on:
+      tor:
+        condition: service_healthy
+      synapse:
+        condition: service_healthy
+    volumes:
+      - shared:/shared
+    networks:
+      pureprivacy_net:
+        ipv4_address: 172.30.0.13
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O- https://localhost/_matrix/client/versions >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  lk-jwt:
+    <<: *default-restart
+    container_name: pureprivacy-lk-jwt
+    profiles: ["voice"]
+    build:
+      context: ./docker/lk-jwt
+    image: pureprivacy/lk-jwt:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      synapse:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+      synapse-fed-proxy:
+        condition: service_healthy
+    environment:
+      LIVEKIT_URL: ws://livekit:7880
+      # No HTTPS_PROXY — the matrix://<onion> resolver bypasses it anyway.
+      # Instead the entrypoint installs an /etc/hosts override pointing
+      # the .onion at synapse-fed-proxy and trusts that proxy's self-
+      # signed CA.  See docker/lk-jwt/entrypoint.sh for the wiring.
+      SYNAPSE_FED_PROXY_IP: 172.30.0.13
+    volumes:
+      - shared:/shared:ro
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      # lk-jwt-service binds 8080 by default and has no /healthz; check that
+      # the port is open instead.
+      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  mcp:
+    <<: *default-restart
+    container_name: pureprivacy-mcp
+    build:
+      context: ./mcp-server
+    image: pureprivacy/mcp:0.1.0
+    depends_on:
+      wizard:
+        condition: service_healthy
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8089
+      SYNAPSE_URL: http://synapse:8008
+      SHARED_DIR: /shared
+      MCP_DATA_DIR: /data
+      MCP_TOKEN_GRACE_SECONDS: ${MCP_TOKEN_GRACE_SECONDS:-600}
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8089}:8089"
+    volumes:
+      - mcp_data:/data
+      - shared:/shared:ro
+    networks:
+      - pureprivacy_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8089/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
+networks:
+  pureprivacy_net:
+    name: pureprivacy_net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  shared:
+  tor_data:
+  postgres_data:
+  synapse_data:
+  mcp_data:

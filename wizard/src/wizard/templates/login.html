@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block body %}
+<p class="muted">Sign in with your admin password to manage this PurePrivacy box.</p>
+
+{% if error %}
+<div class="alert"><b>{{ error }}</b></div>
+{% endif %}
+
+<form method="post" action="/login" autocomplete="off">
+  {% if admin_user %}
+  <div class="field"><b>Signing in as</b><pre>{{ admin_user }}</pre></div>
+  {% endif %}
+  <label for="password">Admin password</label>
+  <input type="password" id="password" name="password" required autofocus>
+  <button type="submit">Sign in</button>
+</form>
+
+<hr>
+
+<p class="muted">Forgot your password?  Use the recovery key you saved
+during first setup, on the host's terminal:</p>
+<pre><code>pureprivacy admin reset-password "&lt;your-recovery-key&gt;"</code></pre>
+<p class="muted">If <code>pureprivacy</code> isn't on your <code>PATH</code>,
+run <code>./scripts/pureprivacy admin reset-password …</code> from the
+PurePrivacy repo directory instead.</p>
+{% endblock %}

@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint (Dockerfiles)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          ignore: DL3008,DL3013,DL3018  # apt/pip/apk version pins; intentional in slim images
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
+          ignore_paths: ./oldcode
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff
+        run: |
+          pip install ruff==0.7.4
+          ruff check wizard/src mcp-server/src
+
+      - name: Unit tests (wizard package, no Docker)
+        run: |
+          cd wizard
+          PYTHONPATH=src python -m unittest discover -s tests -t . -v
+
+  build:
+    name: Build images
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: docker compose build
+        run: docker compose -p pureprivacy build
+
+  e2e:
+    name: End-to-end smoke test
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the stack and drive the wizard + MCP
+        run: |
+          ./scripts/pureprivacy up
+          ./scripts/test-e2e.sh
+
+      - name: Feature regression tests (CRUD, rotation, recovery, pair, /people)
+        run: ./scripts/test-features.sh
+
+      - name: Restart-survival tests
+        run: ./scripts/test-restart.sh
+
+      - name: Healthcheck-failure regression
+        run: ./scripts/test-health.sh
+
+      - name: Backup → restore round-trip
+        run: ./scripts/test-backup.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          ./scripts/pureprivacy doctor || true
+          ./scripts/pureprivacy logs synapse 2>&1 | head -200 || true
+          ./scripts/pureprivacy logs mcp 2>&1 | head -200 || true
+
+      - name: Tear down
+        if: always()
+        run: ./scripts/pureprivacy down || true

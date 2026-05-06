@@ -1,0 +1,27 @@
+# PurePrivacy LiveKit SFU config.
+# Tor-only mode: TCP fallback only, since UDP cannot traverse a hidden service.
+
+port: 7880
+bind_addresses:
+  - 0.0.0.0
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50019
+  use_external_ip: false
+  # Force TCP relay so the WebRTC media path can ride Tor's hidden-service
+  # tunnel.  This adds latency (~100-300 ms above clearnet) but keeps the
+  # whole system reachable without exposing a public IP.
+  enable_loopback_candidate: true
+
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+logging:
+  level: info
+  json: false
+
+# Disable auto-update / telemetry.
+turn:
+  enabled: false

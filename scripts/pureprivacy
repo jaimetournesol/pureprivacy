@@ -1,0 +1,1338 @@
+#!/usr/bin/env bash
+# PurePrivacy CLI — wraps docker compose with subcommands tuned for the
+# appliance lifecycle.  Designed to survive host reboots when paired with
+# systemd (Linux) or Docker Desktop's "start at login" (macOS).
+#
+# Usage:
+#     pureprivacy up [--voice | --no-voice]
+#                           Bring the stack up.  The --voice profile adds
+#                           LiveKit + lk-jwt-service for MatrixRTC group
+#                           calls and is sticky across runs (subsequent
+#                           `up` keeps voice on); pass --no-voice to drop it.
+#     pureprivacy init [--voice] [-y] [--admin-user USER] [--admin-password PW]
+#                           One-shot setup: brings the stack up, creates the
+#                           admin user, prints credentials + onion + MCP token.
+#                           Headless alternative to the browser wizard.
+#                           Idempotent: re-running shows the existing summary.
+#     pureprivacy user add NAME [--admin]
+#     pureprivacy user list
+#     pureprivacy user remove NAME
+#     pureprivacy user reset-password NAME
+#                           Manage Matrix users on this homeserver.
+#     pureprivacy pair create
+#     pureprivacy pair list
+#     pureprivacy pair accept CODE
+#     pureprivacy pair remove ONION
+#                           Manage federation pairings (mirror of /pair UI).
+#     pureprivacy admin reset-password [PASSPHRASE]
+#                           Reset the admin password using the recovery
+#                           passphrase printed at init time.
+#     pureprivacy down      Stop and remove containers (keeps volumes).
+#     pureprivacy stop      Stop containers (preserves them).
+#     pureprivacy start     Start previously-stopped containers.
+#     pureprivacy restart   Restart everything in dependency order.
+#     pureprivacy status    Show service health, onion, setup state.
+#     pureprivacy info      Print onion URL, wizard URL, MCP endpoint.
+#                             info --secrets   also dumps admin password,
+#                                              MCP bearer, and recovery key.
+#     pureprivacy logs [S]  Tail logs.  S is one of:
+#                             tor, privoxy, postgres, synapse, coturn,
+#                             wizard, mcp (or with --voice:
+#                             synapse-fed-proxy, livekit, lk-jwt).
+#     pureprivacy wait      Block until every service is healthy.
+#     pureprivacy verify    Active end-to-end self-test (does the box work?).
+#     pureprivacy doctor    Print diagnostics for bug reports.
+#     pureprivacy backup [--encrypt] [PATH]
+#                           Tarball every named volume to PATH (default
+#                           ./backups/pureprivacy-YYYY-MM-DD-HHMMSS.tar.gz).
+#                           --encrypt prompts for a passphrase and writes
+#                           an openssl AES-256-CBC archive (recommended).
+#                           Stops the stack briefly for a consistent snapshot.
+#     pureprivacy restore PATH
+#                           Restore volumes from a tarball.  Auto-detects
+#                           --encrypt backups and prompts for the passphrase.
+#                           Stack must be stopped; existing volumes are
+#                           overwritten.
+#     pureprivacy reset     Destroy all data (asks for confirmation).
+#     pureprivacy help      This message.
+#
+# Containers will auto-restart on host reboot ONLY if you did not previously
+# stop them (`unless-stopped` policy).  For unconditional autostart on a
+# Linux host, install the systemd unit:  ./scripts/install-systemd.sh
+set -euo pipefail
+
+PROJECT="pureprivacy"
+# Resolve through symlinks so `pureprivacy` works whether you call it as
+# ./scripts/pureprivacy or via a symlink on $PATH.
+SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
+    || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+    || echo "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+# Long-running services we monitor for health.  `init` is a one-shot we
+# don't tail because it has no healthcheck and exits 0 on purpose.
+SERVICES=(tor privoxy postgres synapse coturn wizard mcp)
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
+PROFILE_FILE="${ROOT_DIR}/.pureprivacy-profile"
+
+cd "${ROOT_DIR}"
+
+red()    { printf '\033[31m%s\033[0m\n' "$*"; }
+green()  { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+dim()    { printf '\033[2m%s\033[0m\n' "$*"; }
+bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
+
+# Dispatch on -h/--help/help as a leading arg.  Top-level cmd_* functions
+# call this first so `pureprivacy up --help` (and friends) print the full
+# reference instead of erroring on an unknown flag.  Nested subcommands
+# (user/pair/admin) handle their own --help inline since the usage line
+# differs per inner case.
+maybe_help() {
+    case "${1:-}" in
+        -h|--help|help) cmd_help; exit 0 ;;
+    esac
+}
+
+ensure_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        red "docker is not installed.  Install Docker 24+ first."
+        red "  macOS / Windows:  https://docs.docker.com/desktop/"
+        red "  Linux:            https://docs.docker.com/engine/install/"
+        exit 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        red "docker daemon is not running.  Start Docker, then re-run."
+        exit 1
+    fi
+    # Pure-bash version compare against the documented floor (Docker 24+).
+    local raw major
+    raw="$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "")"
+    major="${raw%%.*}"
+    if [[ -n "${major}" ]] && [[ "${major}" =~ ^[0-9]+$ ]] && [[ "${major}" -lt 24 ]]; then
+        red "docker ${raw} is older than the supported floor (24+)."
+        red "Older Docker engines miss compose v2 features the stack needs."
+        red "Upgrade docker, then re-run."
+        exit 1
+    fi
+    if ! docker compose version >/dev/null 2>&1; then
+        red "the 'docker compose' plugin is not available."
+        red "On Linux, install the docker-compose-plugin package."
+        red "On macOS/Windows, update Docker Desktop."
+        exit 1
+    fi
+}
+
+# env_var(), volume_exists(), and existing_synapse_server_name() were
+# helpers for the old preflight that decided between clearnet/Tor first
+# boot.  Tor-only no longer needs them — Synapse always derives its
+# server_name from /shared/onion_hostname.
+
+container_health() {
+    docker inspect -f '{{.State.Health.Status}}' "pureprivacy-$1" 2>/dev/null \
+        || echo "absent"
+}
+
+container_running() {
+    docker inspect -f '{{.State.Running}}' "pureprivacy-$1" 2>/dev/null \
+        || echo "false"
+}
+
+wait_healthy() {
+    local svc="$1"
+    local deadline=$((SECONDS + WAIT_TIMEOUT))
+    local last_dot=${SECONDS}
+    while [[ ${SECONDS} -lt ${deadline} ]]; do
+        local hs
+        hs="$(container_health "${svc}")"
+        case "${hs}" in
+            healthy)
+                return 0
+                ;;
+            absent)
+                # No healthcheck on this container.  Accept "running" or
+                # "exited 0" (the latter handles one-shot setup jobs like init).
+                local running exit_code
+                running="$(container_running "${svc}")"
+                if [[ "${running}" == "true" ]]; then
+                    return 0
+                fi
+                exit_code="$(docker inspect -f '{{.State.ExitCode}}' \
+                    "pureprivacy-${svc}" 2>/dev/null || echo "1")"
+                if [[ "${exit_code}" == "0" ]]; then
+                    return 0
+                fi
+                ;;
+            unhealthy)
+                red "  ${svc} is unhealthy.  Run \`pureprivacy logs ${svc}\` to see why."
+                return 1
+                ;;
+        esac
+        # Heartbeat dot every ~10s so the operator sees we're still working
+        # (synapse first-boot can take 3+ minutes — important on a Pi).
+        if [[ $((SECONDS - last_dot)) -ge 10 ]]; then
+            printf '.'
+            last_dot=${SECONDS}
+        fi
+        sleep 2
+    done
+    red "  ${svc} did not become healthy within ${WAIT_TIMEOUT}s."
+    if [[ "${svc}" == "tor" ]]; then
+        yellow "  Tor failed to bootstrap.  Likely causes:"
+        yellow "    - Outbound TCP/DNS blocked by your firewall"
+        yellow "    - ISP / network blocks Tor (try bridges in docker/tor/torrc)"
+        yellow "    - Slow first-boot on a low-power host (try WAIT_TIMEOUT=900 pureprivacy up)"
+        yellow "  Check:  pureprivacy logs tor"
+    elif [[ "${svc}" == "synapse" ]]; then
+        yellow "  Synapse first-boot runs DB migrations and can take 3+ minutes."
+        yellow "  If this keeps failing, check:  pureprivacy logs synapse"
+    fi
+    return 1
+}
+
+cmd_up() {
+    maybe_help "$@"
+    ensure_docker
+    # Voice profile is sticky — once you opt in, subsequent `up` calls keep
+    # voice services running unless you explicitly drop them with --no-voice.
+    # Persisted in $PROFILE_FILE so we don't surprise the operator.
+    local voice
+    if [[ -f "${PROFILE_FILE}" ]]; then
+        voice="$(cat "${PROFILE_FILE}")"
+    else
+        voice="false"
+    fi
+    local voice_explicit="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --voice)    voice="true";  voice_explicit="true"; shift ;;
+            --no-voice) voice="false"; voice_explicit="true"; shift ;;
+            *) red "unknown flag: $1"; exit 2 ;;
+        esac
+    done
+    echo "${voice}" > "${PROFILE_FILE}"
+
+    # Detect whether this is the first build (no images yet) so we can warn
+    # the operator about the long initial wait.
+    local first_build="false"
+    if ! docker image inspect "pureprivacy/synapse:0.1.0" >/dev/null 2>&1; then
+        first_build="true"
+    fi
+
+    if [[ "${voice}" == "true" ]]; then
+        export COMPOSE_PROFILES=voice
+        SERVICES=("${SERVICES[@]}" synapse-fed-proxy livekit lk-jwt)
+        bold "Bringing PurePrivacy up (profile: voice)..."
+    else
+        bold "Bringing PurePrivacy up..."
+    fi
+    if [[ "${voice_explicit}" == "false" ]] && [[ "${voice}" == "true" ]]; then
+        dim "  (voice profile remembered from last \`up --voice\`; pass --no-voice to drop it)"
+    fi
+
+    if [[ "${first_build}" == "true" ]]; then
+        yellow "First run detected — building images.  This takes 5–10 minutes"
+        yellow "on a laptop, longer on a Raspberry Pi.  Hang on; we'll keep you"
+        yellow "posted with a dot every ~10 seconds during health checks."
+        echo
+    fi
+
+    # Show docker compose's own progress on first build, hide it for steady-state up.
+    if [[ "${first_build}" == "true" ]]; then
+        docker compose -p "${PROJECT}" up -d --remove-orphans
+    else
+        docker compose -p "${PROJECT}" up -d --remove-orphans >/dev/null
+    fi
+    echo
+    for svc in "${SERVICES[@]}"; do
+        printf "  %-10s " "${svc}"
+        if wait_healthy "${svc}"; then
+            green " ready"
+        else
+            red " FAILED"
+            exit 1
+        fi
+    done
+    echo
+    cmd_info
+}
+
+cmd_down() {
+    maybe_help "$@"
+    ensure_docker
+    bold "Stopping PurePrivacy and removing containers..."
+    docker compose -p "${PROJECT}" down --remove-orphans
+    yellow "Volumes are preserved.  To wipe everything, run \`pureprivacy reset\`."
+}
+
+cmd_stop() {
+    maybe_help "$@"
+    ensure_docker
+    bold "Stopping PurePrivacy (containers preserved)..."
+    docker compose -p "${PROJECT}" stop
+    dim "Use \`pureprivacy start\` to bring them back."
+}
+
+cmd_start() {
+    maybe_help "$@"
+    ensure_docker
+    bold "Starting PurePrivacy..."
+    docker compose -p "${PROJECT}" start
+    cmd_wait
+}
+
+cmd_restart() {
+    maybe_help "$@"
+    ensure_docker
+    bold "Restarting PurePrivacy..."
+    docker compose -p "${PROJECT}" restart
+    cmd_wait
+}
+
+cmd_status() {
+    maybe_help "$@"
+    ensure_docker
+    # One-line summary first so operators can tell at a glance what state
+    # the box is in without parsing the full ps output below.
+    local total=0 healthy=0 running=0
+    # `init` is a one-shot setup container (exits 0 with no healthcheck);
+    # don't include it — it would always count as not-healthy and
+    # mislead the summary line below.
+    local services=(tor privoxy postgres synapse coturn wizard mcp)
+    [[ "$(container_running livekit)" == "true" ]]  && services+=(livekit)
+    [[ "$(container_running lk-jwt)" == "true" ]]   && services+=(lk-jwt)
+    [[ "$(container_running synapse-fed-proxy)" == "true" ]] && services+=(synapse-fed-proxy)
+    for svc in "${services[@]}"; do
+        local hs
+        hs="$(container_health "${svc}")"
+        if [[ "${hs}" == "healthy" ]]; then
+            healthy=$((healthy + 1))
+        fi
+        if [[ "$(container_running "${svc}")" == "true" ]] || [[ "${hs}" == "healthy" ]]; then
+            running=$((running + 1))
+        fi
+        total=$((total + 1))
+    done
+
+    local onion="" setup_state="pending"
+    if docker exec pureprivacy-tor test -s /shared/onion_hostname 2>/dev/null; then
+        onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    fi
+    if docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null; then
+        setup_state="complete"
+    fi
+
+    if [[ "${running}" -eq "${total}" ]] && [[ "${onion}" != "" ]] \
+       && [[ "${setup_state}" == "complete" ]]; then
+        green "${healthy}/${total} healthy · onion: ${onion} · setup: ${setup_state}"
+    elif [[ "${healthy}" -lt "${total}" ]] && [[ "${onion}" == "" ]]; then
+        # Mid-startup: not warning-worthy, just informational.
+        dim "${healthy}/${total} healthy · onion: pending · setup: ${setup_state} (starting up)"
+    else
+        yellow "${healthy}/${total} healthy · onion: ${onion:-pending} · setup: ${setup_state}"
+    fi
+    echo
+
+    docker compose -p "${PROJECT}" ps --format \
+        'table {{.Name}}\t{{.Status}}\t{{.Service}}'
+    if [[ "${setup_state}" == "pending" ]]; then
+        echo
+        yellow "Setup pending — open http://127.0.0.1:8088"
+    fi
+}
+
+peer_count() {
+    # Number of paired federation peers, or 0 if pairings.json is absent.
+    docker exec pureprivacy-wizard python3 -c '
+import json, sys
+try:
+    print(len(json.load(open("/shared/pairings.json")).get("peers", [])))
+except Exception:
+    print(0)
+' 2>/dev/null || echo 0
+}
+
+cmd_info() {
+    maybe_help "$@"
+    local with_secrets="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --secrets) with_secrets="true"; shift ;;
+            *) red "unknown flag: $1"; exit 2 ;;
+        esac
+    done
+    if ! docker exec pureprivacy-tor test -s /shared/onion_hostname 2>/dev/null; then
+        yellow "PurePrivacy is starting.  Run \`pureprivacy status\` again in a moment."
+        return
+    fi
+    if [[ "${with_secrets}" == "true" ]]; then
+        if setup_complete; then
+            print_setup_summary "true"
+            return
+        fi
+        # else: setup not done; fall through to the normal info screen
+    fi
+    local onion
+    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    local livekit_up="false"
+    [[ "$(container_running livekit)" == "true" ]] && livekit_up="true"
+
+    if docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null; then
+        local peers
+        peers="$(peer_count)"
+        bold "Your PurePrivacy box is ready."
+        echo "  Onion:        http://${onion}"
+        echo "  Setup info:   http://127.0.0.1:8088  (admin credentials, QR, MCP token)"
+        if [[ "${peers}" -eq 0 ]]; then
+            echo "  Pair box:     http://127.0.0.1:8088/pair  (no peers paired)"
+        elif [[ "${peers}" -eq 1 ]]; then
+            echo "  Pair box:     http://127.0.0.1:8088/pair  (1 peer paired)"
+        else
+            echo "  Pair box:     http://127.0.0.1:8088/pair  (${peers} peers paired)"
+        fi
+        echo "  MCP endpoint: http://127.0.0.1:8089/mcp"
+        if [[ "${livekit_up}" == "true" ]]; then
+            echo "  Group voice:  enabled (Tor — via synapse-fed-proxy)"
+        fi
+    else
+        bold "PurePrivacy is up.  Finish setup at:"
+        echo "  http://127.0.0.1:8088"
+        echo
+        dim "Onion is already provisioned: http://${onion}"
+    fi
+}
+
+cmd_logs() {
+    case "${1:-}" in
+        -h|--help|help)
+            cat <<'EOF'
+pureprivacy logs [SERVICE]
+  Tail logs from one or all services.  Ctrl-C to exit.
+  Without an argument, follows every service.
+  Service names:
+    default profile:  tor, privoxy, postgres, synapse, coturn, wizard, mcp
+    voice profile:    + synapse-fed-proxy, livekit, lk-jwt
+EOF
+            return 0
+            ;;
+    esac
+    ensure_docker
+    if [[ $# -eq 0 ]]; then
+        docker compose -p "${PROJECT}" logs --tail=200 -f
+    else
+        docker compose -p "${PROJECT}" logs --tail=500 -f "$1"
+    fi
+}
+
+# ---- helpers for `init`, `user`, `pair`, `admin` subcommands -----------------
+
+wizard_python() {
+    # Run a python -c snippet inside the wizard container and return stdout.
+    # The snippet is read from stdin so we don't have to escape arguments.
+    docker exec -i pureprivacy-wizard python3 -
+}
+
+render_qr_ansi() {
+    # Render the given string as an ANSI-art QR using the wizard image's
+    # qrcode library.  Output is colour-aware (block characters); falls back
+    # gracefully on non-truecolor terminals.
+    local data="$1"
+    docker exec -i pureprivacy-wizard python3 -c '
+import sys, qrcode
+qr = qrcode.QRCode(box_size=1, border=1)
+qr.add_data(sys.stdin.read().rstrip("\n"))
+qr.make(fit=True)
+qr.print_ascii(invert=True)
+' <<< "${data}"
+}
+
+setup_complete() {
+    docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null
+}
+
+read_setup_field() {
+    # Print one field from /shared/.setup-complete.  Returns empty string if
+    # the file is missing or the field is absent.
+    # `key` is controlled by callers — only known field names — so embedding
+    # it directly in the python literal is safe.
+    local key="$1"
+    docker exec pureprivacy-wizard python3 -c "
+import json
+try:
+    d = json.load(open('/shared/.setup-complete'))
+    print(d.get('${key}', ''))
+except FileNotFoundError:
+    pass
+"
+}
+
+read_mcp_token() {
+    docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token 2>/dev/null \
+        | tr -d '[:space:]'
+}
+
+print_setup_summary() {
+    # Pretty-print everything an operator needs after `init`.  Dumps the
+    # admin password and MCP bearer token; only call this from `init` /
+    # `info --secrets`, not from the default `info`.
+    local include_secrets="${1:-true}"
+    local onion admin_user admin_password mcp_user mcp_token recovery
+    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    admin_user="$(read_setup_field admin_user)"
+    admin_password="$(read_setup_field admin_password)"
+    mcp_user="$(read_setup_field mcp_user)"
+    recovery="$(read_setup_field recovery_passphrase)"
+    mcp_token="$(read_mcp_token)"
+
+    echo
+    bold "PurePrivacy is ready."
+    echo
+    bold "Phone (Element)"
+    echo "  Homeserver:  http://${onion}"
+    echo "  Username:    ${admin_user}"
+    if [[ "${include_secrets}" == "true" ]]; then
+        echo "  Password:    ${admin_password}"
+    else
+        echo "  Password:    [hidden — use \`pureprivacy info --secrets\` to reveal]"
+    fi
+    echo
+    if [[ "${include_secrets}" == "true" ]]; then
+        dim "Scan to add the homeserver URL to Element (Edit homeserver → paste URL):"
+        render_qr_ansi "http://${onion}"
+        echo
+    fi
+    bold "Agent (MCP)"
+    echo "  Endpoint:    http://127.0.0.1:8089/mcp"
+    if [[ "${include_secrets}" == "true" ]]; then
+        echo "  Bearer:      ${mcp_token}"
+    else
+        echo "  Bearer:      [hidden — use \`pureprivacy info --secrets\` to reveal]"
+    fi
+    echo "  Bot user:    ${mcp_user}"
+    if [[ "${include_secrets}" == "true" ]]; then
+        echo
+        echo "  Claude Code: claude mcp add pureprivacy http://127.0.0.1:8089/mcp \\"
+        echo "                 --transport http \\"
+        echo "                 --header \"Authorization: Bearer ${mcp_token}\""
+    fi
+    if [[ -n "${recovery}" ]] && [[ "${include_secrets}" == "true" ]]; then
+        echo
+        bold "Recovery passphrase (write this down — it can reset the admin password)"
+        echo "  ${recovery}"
+    fi
+    echo
+}
+
+admin_cli() {
+    # Run wizard.admin_cli inside the wizard container.  All output passes
+    # through verbatim so the caller can json-parse stdout.
+    docker exec pureprivacy-wizard python3 -m wizard.admin_cli "$@"
+}
+
+cli_token() {
+    # Read the wizard's CLI auth token (generated at wizard startup).
+    # Used by `pair accept` / `pair remove` and the test scripts to bypass
+    # cookie-based auth on state-changing routes.  See wizard/auth.py.
+    docker exec pureprivacy-wizard cat /shared/secrets/cli_token 2>/dev/null \
+        | tr -d '[:space:]'
+}
+
+require_setup() {
+    if ! setup_complete; then
+        red "Setup is not complete.  Run \`pureprivacy init\` first."
+        exit 2
+    fi
+}
+
+cmd_user() {
+    ensure_docker
+    require_setup
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        add)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy user add NAME [--admin] [--password PW]"
+                echo "  Create a new Matrix account on this homeserver."
+                echo "  Generates a random 20-char password if --password is omitted."
+                echo "  Prints a phone-onboarding QR for the new user."
+                return 0 ;;
+            esac
+            local admin_flag="" name="" password=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --admin) admin_flag="--admin"; shift ;;
+                    --password) password="$2"; shift 2 ;;
+                    -*) red "unknown flag: $1"; exit 2 ;;
+                    *) name="$1"; shift ;;
+                esac
+            done
+            [[ -n "${name}" ]] || { red "usage: pureprivacy user add NAME [--admin] [--password PW]"; exit 2; }
+            local args=(user-add "${name}")
+            [[ -n "${admin_flag}" ]] && args+=("${admin_flag}")
+            [[ -n "${password}" ]] && args+=(--password "${password}")
+            local out
+            out="$(admin_cli "${args[@]}")"
+            local user_id pw hs admin_str
+            user_id="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["user_id"])')"
+            pw="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["password"])')"
+            hs="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["homeserver_url"])')"
+            admin_str="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["admin"])')"
+            echo
+            green "Created ${user_id}$([[ "${admin_str}" == "True" ]] && echo " (admin)")"
+            echo
+            echo "  Homeserver:  ${hs}"
+            echo "  Username:    ${user_id##@}"
+            echo "  Password:    ${pw}"
+            echo
+            dim "Scan to add the homeserver URL to Element (Sign in → Edit homeserver → paste URL):"
+            render_qr_ansi "${hs}"
+            echo
+            dim "Save this password — it will not be shown again unless you run \`pureprivacy user reset-password\`."
+            ;;
+        list)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy user list"
+                echo "  Print every Matrix account on this homeserver."
+                echo "  Deactivated accounts are flagged but still listed."
+                return 0 ;;
+            esac
+            admin_cli user-list | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for u in data["users"]:
+    flags = []
+    if u["admin"]: flags.append("admin")
+    if u["deactivated"]: flags.append("deactivated")
+    suffix = " (" + ", ".join(flags) + ")" if flags else ""
+    user_id = u["user_id"]
+    print("  " + user_id + suffix)
+    name = u["display_name"]
+    if name and name != user_id:
+        print("    " + name)
+'
+            ;;
+        remove)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy user remove NAME"
+                echo "  Deactivate a Matrix account (data erased on Synapse)."
+                echo "  Refuses to remove the original admin or the MCP bot."
+                return 0 ;;
+            esac
+            local name="${1:-}"
+            [[ -n "${name}" ]] || { red "usage: pureprivacy user remove NAME"; exit 2; }
+            local out
+            out="$(admin_cli user-remove "${name}")" || exit $?
+            local user_id
+            user_id="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["user_id"])')"
+            green "Deactivated ${user_id} (data erased on Synapse side)."
+            ;;
+        reset-password)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy user reset-password NAME [--password PW]"
+                echo "  Issue a new password for a user.  All their existing"
+                echo "  devices are signed out — they re-sign-in with the new password."
+                return 0 ;;
+            esac
+            local name="${1:-}"
+            shift || true
+            [[ -n "${name}" ]] || { red "usage: pureprivacy user reset-password NAME [--password PW]"; exit 2; }
+            local password=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --password) password="$2"; shift 2 ;;
+                    *) red "unknown flag: $1"; exit 2 ;;
+                esac
+            done
+            local args=(user-reset-password "${name}")
+            [[ -n "${password}" ]] && args+=(--password "${password}")
+            local out
+            out="$(admin_cli "${args[@]}")" || exit $?
+            local user_id pw
+            user_id="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["user_id"])')"
+            pw="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["password"])')"
+            echo
+            green "Reset password for ${user_id}"
+            echo
+            echo "  Username:  ${user_id##@}"
+            echo "  Password:  ${pw}"
+            echo
+            dim "All other devices for this user have been logged out — they'll need to re-sign-in."
+            ;;
+        ""|help|-h|--help)
+            cat <<'EOF'
+pureprivacy user add NAME [--admin] [--password PW]
+pureprivacy user list
+pureprivacy user remove NAME
+pureprivacy user reset-password NAME [--password PW]
+EOF
+            ;;
+        *)
+            red "unknown subcommand: user ${sub}"
+            exit 2
+            ;;
+    esac
+}
+
+cmd_pair() {
+    ensure_docker
+    require_setup
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        create)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy pair create"
+                echo "  Mint a 15-minute pair code to send to another box."
+                echo "  Print as both base64 text and a QR."
+                return 0 ;;
+            esac
+            local out
+            out="$(admin_cli pair-create)"
+            local code expires
+            code="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["pair_code"])')"
+            expires="$(printf '%s' "${out}" | python3 -c 'import json,sys,datetime;print(datetime.datetime.fromtimestamp(json.load(sys.stdin)["expires_at"]).strftime("%Y-%m-%d %H:%M:%S"))')"
+            echo
+            bold "Pair code (share with the peer; expires ${expires})"
+            echo
+            echo "  ${code}"
+            echo
+            dim "Or scan:"
+            render_qr_ansi "${code}"
+            echo
+            dim "On the other box, paste the full code above into:"
+            dim "  pureprivacy pair accept <CODE>"
+            ;;
+        list)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy pair list"
+                echo "  Print currently-paired federation peers (by .onion)."
+                return 0 ;;
+            esac
+            admin_cli pair-list | python3 -c '
+import json, sys, datetime
+data = json.load(sys.stdin)
+peers = data["peers"]
+if not peers:
+    print("No peers paired.")
+else:
+    for p in peers:
+        ts = datetime.datetime.fromtimestamp(p["added_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        print("  " + p["onion"] + "    paired " + ts)
+'
+            ;;
+        accept)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy pair accept CODE"
+                echo "  Add a peer's pair code to this box's federation list."
+                echo "  Restarts Synapse so the new whitelist takes effect."
+                return 0 ;;
+            esac
+            local code="${1:-}"
+            [[ -n "${code}" ]] || { red "usage: pureprivacy pair accept CODE"; exit 2; }
+            bold "Pairing & restarting Synapse..."
+            local body_path
+            body_path="$(mktemp)"
+            local http
+            http="$(curl -s -o "${body_path}" -w '%{http_code}' \
+                -X POST http://127.0.0.1:8088/pair/accept \
+                -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
+                --data-urlencode "pair_code=${code}")"
+            if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
+                red "Pair failed (HTTP ${http}):"
+                head -c 500 "${body_path}" >&2; echo >&2
+                rm -f "${body_path}"
+                exit 1
+            fi
+            rm -f "${body_path}"
+            green "Paired and Synapse restarted with the new federation list."
+            ;;
+        remove)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy pair remove ONION"
+                echo "  Drop a peer from the federation list and restart Synapse."
+                return 0 ;;
+            esac
+            local onion="${1:-}"
+            [[ -n "${onion}" ]] || { red "usage: pureprivacy pair remove ONION"; exit 2; }
+            bold "Unpairing & restarting Synapse..."
+            local body_path
+            body_path="$(mktemp)"
+            local http
+            http="$(curl -s -o "${body_path}" -w '%{http_code}' \
+                -X POST http://127.0.0.1:8088/pair/remove \
+                -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
+                --data-urlencode "onion=${onion}")"
+            if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
+                red "Unpair failed (HTTP ${http}):"
+                head -c 500 "${body_path}" >&2; echo >&2
+                rm -f "${body_path}"
+                exit 1
+            fi
+            rm -f "${body_path}"
+            green "Unpaired ${onion} and Synapse restarted."
+            ;;
+        ""|help|-h|--help)
+            cat <<'EOF'
+pureprivacy pair create
+pureprivacy pair list
+pureprivacy pair accept CODE
+pureprivacy pair remove ONION
+EOF
+            ;;
+        *)
+            red "unknown subcommand: pair ${sub}"
+            exit 2
+            ;;
+    esac
+}
+
+cmd_init() {
+    maybe_help "$@"
+    ensure_docker
+    local voice="false"
+    local admin_user="" admin_password=""
+    local non_interactive="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --voice) voice="true"; shift ;;
+            --admin-user) admin_user="$2"; shift 2 ;;
+            --admin-password) admin_password="$2"; shift 2 ;;
+            -y|--yes|--non-interactive) non_interactive="true"; shift ;;
+            *) red "unknown flag: $1"; exit 2 ;;
+        esac
+    done
+
+    if [[ "${voice}" == "true" ]]; then
+        cmd_up --voice
+    else
+        cmd_up
+    fi
+
+    if setup_complete; then
+        green "Setup is already complete — showing the existing summary."
+        print_setup_summary "true"
+        return 0
+    fi
+
+    bold "Waiting for the wizard to come online..."
+    local deadline=$((SECONDS + 120))
+    while [[ ${SECONDS} -lt ${deadline} ]]; do
+        if curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+    done
+    if ! curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+        red "Wizard did not come online within 120s.  Run \`pureprivacy logs wizard\`."
+        exit 1
+    fi
+
+    local onion=""
+    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null || true)"
+    if [[ -z "${onion}" ]]; then
+        red "Tor onion is not yet published.  Wait a few seconds and re-run."
+        exit 1
+    fi
+
+    if [[ -z "${admin_user}" ]]; then
+        admin_user="admin"
+    fi
+    if [[ -z "${admin_password}" ]]; then
+        if [[ "${non_interactive}" == "true" ]]; then
+            admin_password="$(wizard_python <<'PY'
+from wizard.synapse import random_password
+print(random_password(20))
+PY
+)"
+            yellow "Generated random admin password (will be shown below)."
+        else
+            echo
+            dim "About to set the admin password for this PurePrivacy box."
+            dim "  - Saved to /shared/.setup-complete inside the box (mode 0600),"
+            dim "    so it can be re-displayed later via \`pureprivacy info --secrets\`."
+            dim "  - Printed once below — copy it into a password manager."
+            dim "  - Min 12 chars.  Press Enter to generate a strong random one."
+            echo
+            local pw1 pw2
+            while true; do
+                read -srp "Admin password (12+ chars, blank to auto-generate): " pw1
+                echo
+                if [[ -z "${pw1}" ]]; then
+                    admin_password="$(wizard_python <<'PY'
+from wizard.synapse import random_password
+print(random_password(20))
+PY
+)"
+                    yellow "Generated: ${admin_password}"
+                    break
+                fi
+                if [[ ${#pw1} -lt 12 ]]; then
+                    red "Password must be at least 12 characters."
+                    continue
+                fi
+                read -srp "Confirm password: " pw2
+                echo
+                if [[ "${pw1}" != "${pw2}" ]]; then
+                    red "Passwords do not match."
+                    continue
+                fi
+                admin_password="${pw1}"
+                break
+            done
+        fi
+    fi
+
+    bold "Creating admin user @${admin_user}:${onion}..."
+    local body_path
+    body_path="$(mktemp)"
+    local code
+    code="$(curl -s -o "${body_path}" -w '%{http_code}' \
+        -X POST http://127.0.0.1:8088/setup \
+        --data-urlencode "admin_username=${admin_user}" \
+        --data-urlencode "admin_password=${admin_password}")"
+    if [[ "${code}" != "303" ]] && [[ "${code}" != "200" ]]; then
+        red "Setup failed (HTTP ${code}):"
+        head -c 500 "${body_path}" >&2; echo >&2
+        rm -f "${body_path}"
+        exit 1
+    fi
+    rm -f "${body_path}"
+
+    print_setup_summary "true"
+    dim "Save the password and bearer token now — \`pureprivacy info --secrets\` will reveal them again later, but treat that command as sensitive."
+}
+
+cmd_wait() {
+    maybe_help "$@"
+    ensure_docker
+    for svc in "${SERVICES[@]}"; do
+        printf "  %-10s " "${svc}"
+        if wait_healthy "${svc}"; then
+            green "ready"
+        else
+            return 1
+        fi
+    done
+    echo
+    cmd_info
+}
+
+cmd_doctor() {
+    maybe_help "$@"
+    ensure_docker
+    bold "PurePrivacy doctor"
+    echo
+    echo "docker version:"
+    docker --version
+    docker compose version
+    echo
+    echo "containers:"
+    docker compose -p "${PROJECT}" ps --format \
+        'table {{.Name}}\t{{.Status}}\t{{.RunningFor}}'
+    echo
+    echo "volumes:"
+    docker volume ls --filter "name=${PROJECT}_" --format \
+        'table {{.Name}}\t{{.Driver}}'
+    echo
+    echo "network:"
+    docker network inspect "${PROJECT}_net" --format \
+        '  subnet:    {{(index .IPAM.Config 0).Subnet}}
+  containers: {{len .Containers}}'
+    echo
+    echo "tor onion:"
+    docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null \
+        | sed 's/^/  /' || yellow "  not yet published"
+    echo
+    echo "synapse client API:"
+    docker exec pureprivacy-synapse \
+        curl -fsS http://localhost:8008/_matrix/client/versions 2>/dev/null \
+        | head -c 80 || yellow "  unreachable"
+    echo
+    echo "wizard:"
+    curl -fsS http://127.0.0.1:8088/healthz 2>/dev/null | sed 's/^/  /' \
+        || yellow "  unreachable"
+    echo
+    echo "mcp:"
+    curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null | sed 's/^/  /' \
+        || yellow "  unreachable"
+}
+
+cmd_verify() {
+    maybe_help "$@"
+    ensure_docker
+    # Active end-to-end self-test, distinct from `doctor` (which dumps state).
+    # Exit code: 0 if everything green, 1 if any check failed.
+    bold "PurePrivacy verify"
+    echo
+    local ok=0 fail=0
+
+    check() {
+        local label="$1"
+        shift
+        printf "  %-40s " "${label}"
+        if "$@" >/dev/null 2>&1; then
+            green "ok"
+            ok=$((ok + 1))
+        else
+            red "FAIL"
+            fail=$((fail + 1))
+        fi
+    }
+
+    check "docker daemon" docker info
+    check "compose project up" \
+        bash -c "docker compose -p '${PROJECT}' ps -q | grep -q ."
+    check "tor container running" \
+        bash -c "[[ \$(container_running tor) == 'true' ]]"
+    check "tor onion published" \
+        docker exec pureprivacy-tor test -s /shared/onion_hostname
+    check "synapse healthy" \
+        bash -c "[[ \$(container_health synapse) == 'healthy' ]]"
+    check "synapse client API" \
+        docker exec pureprivacy-synapse curl -fsS \
+            http://localhost:8008/_matrix/client/versions
+    check "wizard /healthz" \
+        curl -fsS http://127.0.0.1:8088/healthz
+    check "mcp /healthz" \
+        curl -fsS http://127.0.0.1:8089/healthz
+
+    if setup_complete; then
+        check "setup complete" true
+        # Bot readiness lives in the MCP /healthz JSON; parse it.
+        local bot_ready
+        bot_ready="$(curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);print("ok" if d.get("matrix_bot_ready") else "no")' 2>/dev/null)"
+        printf "  %-40s " "mcp bot logged in to synapse"
+        if [[ "${bot_ready}" == "ok" ]]; then
+            green "ok"
+            ok=$((ok + 1))
+        else
+            yellow "not yet (bot may still be doing first Olm key upload)"
+            fail=$((fail + 1))
+        fi
+    else
+        printf "  %-40s " "setup complete"
+        yellow "pending — run \`pureprivacy init\` or open http://127.0.0.1:8088"
+    fi
+
+    # Self-resolve the .onion through the box's own Tor SOCKS proxy to prove
+    # the homeserver is actually reachable from outside the docker network
+    # path (this is what your phone over Orbot/Onion Browser will do).
+    local onion
+    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    if [[ -n "${onion}" ]]; then
+        printf "  %-40s " "synapse reachable via tor SOCKS"
+        if docker exec pureprivacy-tor sh -c \
+            "command -v curl >/dev/null && curl -fsS --socks5-hostname 127.0.0.1:9050 'http://${onion}/_matrix/client/versions'" \
+            >/dev/null 2>&1; then
+            green "ok"
+            ok=$((ok + 1))
+        else
+            yellow "skipped (tor image lacks curl) or onion not yet routable"
+        fi
+    fi
+
+    echo
+    if [[ ${fail} -eq 0 ]]; then
+        green "All checks passed (${ok})."
+        return 0
+    else
+        red "${fail} check(s) failed; ${ok} passed."
+        yellow "Run \`pureprivacy logs <service>\` on the failed components,"
+        yellow "or \`pureprivacy doctor\` for a full state dump."
+        return 1
+    fi
+}
+
+_volumes() {
+    # Names of every named volume the project owns.  Docker compose
+    # auto-prefixes with the project name, so volumes declared as `shared`
+    # in compose end up as `pureprivacy_shared` on disk.
+    echo "${PROJECT}_shared ${PROJECT}_tor_data ${PROJECT}_postgres_data \
+${PROJECT}_synapse_data ${PROJECT}_mcp_data"
+}
+
+cmd_backup() {
+    maybe_help "$@"
+    ensure_docker
+    local encrypt="false"
+    local positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --encrypt) encrypt="true"; shift ;;
+            --no-encrypt) encrypt="false"; shift ;;
+            -*) red "unknown flag: $1"; exit 2 ;;
+            *) positional+=("$1"); shift ;;
+        esac
+    done
+
+    local default_name="./backups/pureprivacy-$(date +%Y-%m-%d-%H%M%S).tar.gz"
+    [[ "${encrypt}" == "true" ]] && default_name="${default_name}.enc"
+    local out="${positional[0]:-${default_name}}"
+    local outdir
+    outdir="$(cd "$(dirname "${out}")" 2>/dev/null && pwd)" || {
+        mkdir -p "$(dirname "${out}")"
+        outdir="$(cd "$(dirname "${out}")" && pwd)"
+    }
+    local outname
+    outname="$(basename "${out}")"
+
+    bold "Backing up to ${outdir}/${outname}"
+
+    local passphrase=""
+    if [[ "${encrypt}" == "true" ]]; then
+        if ! command -v openssl >/dev/null 2>&1; then
+            red "openssl not found.  --encrypt needs openssl on the host."
+            exit 1
+        fi
+        local pp1 pp2
+        while true; do
+            read -srp "Backup passphrase (10+ chars): " pp1; echo
+            if [[ ${#pp1} -lt 10 ]]; then
+                red "Passphrase must be at least 10 characters."
+                continue
+            fi
+            read -srp "Confirm passphrase: " pp2; echo
+            if [[ "${pp1}" != "${pp2}" ]]; then
+                red "Passphrases do not match."
+                continue
+            fi
+            passphrase="${pp1}"
+            break
+        done
+    fi
+
+    # Briefly stop the stack so we tar consistent state.  Keeping it running
+    # could capture a half-written postgres page; stopping is the simple
+    # correct answer at v0.1.x scale.
+    local was_running="false"
+    if docker ps --format '{{.Names}}' | grep -q "^pureprivacy-postgres$"; then
+        was_running="true"
+        cmd_stop
+    fi
+
+    # tar every volume into one tarball.  We mount each volume into a
+    # subdirectory of /src so the resulting tarball preserves which volume
+    # each file came from.
+    local mounts=()
+    for v in $(_volumes); do
+        mounts+=("-v" "${v}:/src/${v}:ro")
+    done
+    if [[ "${encrypt}" == "true" ]]; then
+        # Stream tar → openssl enc on the host so the passphrase never
+        # touches a docker container.  PBKDF2 + AES-256-CBC is supported on
+        # every openssl 1.1.1+ build.
+        docker run --rm \
+            "${mounts[@]}" \
+            alpine:3.20 \
+            tar cz -C /src . \
+            | openssl enc -aes-256-cbc -salt -pbkdf2 \
+                -pass "pass:${passphrase}" \
+                -out "${outdir}/${outname}"
+    else
+        docker run --rm \
+            "${mounts[@]}" \
+            -v "${outdir}:/dst" \
+            alpine:3.20 \
+            tar czf "/dst/${outname}" -C /src .
+    fi
+
+    if [[ "${was_running}" == "true" ]]; then
+        cmd_start
+    fi
+
+    green "  wrote ${outdir}/${outname}"
+    if [[ "${encrypt}" == "true" ]]; then
+        dim "Decrypt later with:"
+        dim "  openssl enc -d -aes-256-cbc -pbkdf2 -in ${outname} -out ${outname%.enc}"
+    else
+        yellow "Plain tarball — encrypt before sharing.  Re-run with --encrypt for"
+        yellow "built-in AES-256 protection, or use \`age -p\` / \`gpg --symmetric\`."
+    fi
+}
+
+cmd_restore() {
+    maybe_help "$@"
+    ensure_docker
+    local src="${1:-}"
+    if [[ -z "${src}" ]]; then
+        red "usage: pureprivacy restore <path-to-tarball>"
+        exit 2
+    fi
+    if [[ ! -f "${src}" ]]; then
+        red "no such file: ${src}"
+        exit 2
+    fi
+    src="$(cd "$(dirname "${src}")" && pwd)/$(basename "${src}")"
+
+    red "Restore will OVERWRITE every PurePrivacy volume on this host."
+    read -p "Type 'restore' to confirm (anything else cancels): " confirm
+    if [[ "${confirm}" != "restore" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    # Detect openssl-encrypted backup (made via `pureprivacy backup --encrypt`)
+    # by file extension or magic bytes, then decrypt to a tmp tarball.
+    local actual_src="${src}"
+    local tmp_decrypted=""
+    if [[ "${src}" == *.enc ]] || head -c 8 "${src}" 2>/dev/null | grep -q "Salted__"; then
+        if ! command -v openssl >/dev/null 2>&1; then
+            red "Backup looks encrypted but openssl is not installed."
+            exit 1
+        fi
+        local pp
+        read -srp "Backup passphrase: " pp; echo
+        tmp_decrypted="$(mktemp -t pureprivacy-restore.XXXXXX).tar.gz"
+        if ! openssl enc -d -aes-256-cbc -pbkdf2 \
+                -pass "pass:${pp}" \
+                -in "${src}" -out "${tmp_decrypted}" 2>/dev/null; then
+            red "Decryption failed.  Wrong passphrase, or the file is not"
+            red "an openssl AES-256-CBC archive made by \`pureprivacy backup --encrypt\`."
+            rm -f "${tmp_decrypted}"
+            exit 1
+        fi
+        actual_src="${tmp_decrypted}"
+        green "  decrypted ${src} → tmp"
+    fi
+    # Use actual_src below so encrypted and plain paths converge.
+    src="${actual_src}"
+
+    # Stack must be down so volumes aren't open files.  Use down (not stop)
+    # so containers don't restart underneath us mid-restore.
+    docker compose -p "${PROJECT}" down >/dev/null 2>&1 || true
+
+    # Volume creation is idempotent — `docker volume create` does nothing
+    # if the volume already exists.
+    for v in $(_volumes); do
+        docker volume create "${v}" >/dev/null
+    done
+
+    # Mount each volume read-write at /dst/<volname>, untar, scrub anything
+    # that wasn't in the backup so partial restores don't leave stale files.
+    local mounts=()
+    for v in $(_volumes); do
+        mounts+=("-v" "${v}:/dst/${v}")
+    done
+    docker run --rm \
+        "${mounts[@]}" \
+        -v "$(dirname "${src}"):/backup:ro" \
+        alpine:3.20 sh -c "
+            set -eu
+            for v in $(_volumes); do
+                # Empty the volume so we don't leave stale files.
+                find /dst/\$v -mindepth 1 -delete 2>/dev/null || true
+            done
+            tar xzf /backup/$(basename "${src}") -C /dst
+        "
+    green "  restored from ${src}"
+    bold "Bring the stack back up with: pureprivacy up"
+}
+
+cmd_reset() {
+    maybe_help "$@"
+    ensure_docker
+    red "This will destroy ALL PurePrivacy data: messages, keys, accounts, the onion identity."
+    red "Existing containers, volumes, and networks for the 'pureprivacy' project will be removed."
+    read -p "Type 'reset' to confirm (anything else cancels): " confirm
+    if [[ "${confirm}" != "reset" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    docker compose -p "${PROJECT}" down -v --remove-orphans
+    rm -f "${PROFILE_FILE}"
+    green "Done.  Run \`pureprivacy up\` to start fresh."
+}
+
+cmd_admin() {
+    require_setup
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        reset-password)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy admin reset-password [PASSPHRASE] [--new-password PW]"
+                echo "  Use the recovery key (printed at first setup) to reset"
+                echo "  the admin password without wiping any data."
+                echo "  Prompts for the recovery key if PASSPHRASE is omitted."
+                return 0 ;;
+            esac
+            local passphrase="${1:-}"
+            shift || true
+            local new_password=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --new-password) new_password="$2"; shift 2 ;;
+                    *) red "unknown flag: $1"; exit 2 ;;
+                esac
+            done
+            if [[ -z "${passphrase}" ]]; then
+                read -srp "Recovery key: " passphrase
+                echo
+            fi
+            [[ -n "${passphrase}" ]] || { red "recovery key required"; exit 2; }
+            local args=(admin-reset-password "${passphrase}")
+            [[ -n "${new_password}" ]] && args+=(--new-password "${new_password}")
+            local out
+            out="$(admin_cli "${args[@]}")" || exit $?
+            local user_id pw
+            user_id="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["user_id"])')"
+            pw="$(printf '%s' "${out}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["password"])')"
+            echo
+            green "Reset password for ${user_id}"
+            echo
+            echo "  Username:  ${user_id##@}"
+            echo "  Password:  ${pw}"
+            echo
+            dim "All other devices for this user have been logged out — sign in again with the new password."
+            ;;
+        ""|help|-h|--help)
+            cat <<'EOF'
+pureprivacy admin reset-password PASSPHRASE [--new-password PW]
+EOF
+            ;;
+        *)
+            red "unknown subcommand: admin ${sub}"
+            exit 2
+            ;;
+    esac
+}
+
+cmd_help() {
+    # Print the "# Usage:" comment block at the top of this file.
+    awk '
+        /^# Usage:/ { printing=1 }
+        printing && !/^#/ { exit }
+        printing { sub(/^# ?/, "", $0); print }
+    ' "${BASH_SOURCE[0]}"
+}
+
+main() {
+    local cmd="${1:-help}"
+    shift || true
+    case "${cmd}" in
+        up)       cmd_up "$@" ;;
+        init)     cmd_init "$@" ;;
+        user)     cmd_user "$@" ;;
+        pair)     cmd_pair "$@" ;;
+        admin)    cmd_admin "$@" ;;
+        down)     cmd_down "$@" ;;
+        stop)     cmd_stop "$@" ;;
+        start)    cmd_start "$@" ;;
+        restart)  cmd_restart "$@" ;;
+        status)   cmd_status "$@" ;;
+        info)     cmd_info "$@" ;;
+        logs)     cmd_logs "$@" ;;
+        wait)     cmd_wait "$@" ;;
+        doctor)   cmd_doctor "$@" ;;
+        verify)   cmd_verify "$@" ;;
+        backup)   cmd_backup "$@" ;;
+        restore)  cmd_restore "$@" ;;
+        reset)    cmd_reset "$@" ;;
+        help|-h|--help) cmd_help ;;
+        *)
+            red "unknown command: ${cmd}"
+            cmd_help
+            exit 2
+            ;;
+    esac
+}
+
+main "$@"

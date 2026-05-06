@@ -1,0 +1,26 @@
+[Unit]
+Description=PurePrivacy Matrix appliance
+Documentation=https://github.com/PurePrivacy/pureprivacy
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Edit WorkingDirectory to wherever you cloned the repo on this host.
+WorkingDirectory=/opt/pureprivacy
+ExecStart=/opt/pureprivacy/scripts/pureprivacy up
+ExecStop=/opt/pureprivacy/scripts/pureprivacy stop
+
+# Generous start timeout — first boot does image builds + initial Synapse
+# DB migrations.  Subsequent boots finish in well under 60 s.
+TimeoutStartSec=600
+
+# Restart unconditionally if the up command itself exits non-zero.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

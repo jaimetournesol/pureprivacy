@@ -1,0 +1,38 @@
+# PurePrivacy coturn configuration.  Built for TCP-only relay over Tor.
+
+# Client-facing listening ports.
+listening-port=3478
+tls-listening-port=5349
+
+# Relay range.  Must match the HiddenServicePort entries in tor's torrc.
+min-port=49152
+max-port=49161
+
+# We don't have a real public IP — coturn's external-ip is the .onion
+# hostname so client SDP advertises the right address.
+external-ip=${SERVER_NAME}
+
+# Authentication: long-term shared secret, the same one Synapse advertises
+# to clients via /voip/turnServer.  Synapse signs short-lived TURN credentials
+# with this secret.
+use-auth-secret
+static-auth-secret=${TURN_SHARED_SECRET}
+
+# Realm matches the homeserver name so credentials are scoped correctly.
+realm=${SERVER_NAME}
+
+# Hard mode: refuse plain UDP because Tor cannot tunnel it.
+no-udp
+no-udp-relay
+
+# Defensive defaults.
+no-multicast-peers
+no-cli
+no-stdout-log
+fingerprint
+total-quota=200
+user-quota=20
+
+# Logging straight to stderr for `docker logs`.
+log-file=stdout
+verbose

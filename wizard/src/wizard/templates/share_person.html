@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}{% if reset %}New password{% else %}Account ready{% endif %}{% endblock %}
+{% block body %}
+<p class="muted"><a href="/people" style="color:var(--accent);">← back to people</a></p>
+
+{% if reset %}
+<h2 style="margin-top:0;">Reset password for {{ user_id }}</h2>
+<p class="muted">Their old password is no longer valid.  Their existing
+devices have been signed out — they need the new password below to log
+back in on each device.</p>
+{% else %}
+<h2 style="margin-top:0;">Account ready</h2>
+<p class="muted">Show this page to <b>{{ user_id }}</b>.  They install
+Element on their phone, point it at your homeserver, and use the
+credentials below.  This is the only time the password is shown — copy it
+now (or hand them the QR).</p>
+{% endif %}
+
+<div class="row">
+  <div>
+    <div class="field"><b>Homeserver</b><pre class="copyable">{{ homeserver_url }}</pre></div>
+    <div class="field"><b>Username</b><pre class="copyable">{{ user_id }}</pre></div>
+    <div class="field">
+      <b>Password</b>
+      <details open>
+        <summary class="muted" style="cursor:pointer;padding:6px 0;">Click to hide / reveal</summary>
+        <pre class="copyable">{{ password }}</pre>
+      </details>
+    </div>
+    {% if is_admin %}<p class="muted danger"><b>This account is an admin.</b>  They can add and remove other people on this box.</p>{% endif %}
+  </div>
+  <div>
+    <p class="muted">Or scan with their phone:</p>
+    <div class="qr"><img src="{{ qr_data_url }}" alt="onboarding QR"></div>
+  </div>
+</div>
+
+<hr>
+
+<h2>How they connect</h2>
+<ol>
+  <li>Install <a href="https://element.io/download" target="_blank">Element</a>
+      (the original — <b>recommended for v0.1</b>) on their phone.  Element X
+      also works but has rougher edges over Tor.</li>
+  <li>If they're connecting over Tor, install
+      <a href="https://orbot.app/" target="_blank">Orbot</a> (Android) or
+      <a href="https://onionbrowser.com/" target="_blank">Onion Browser</a> (iOS)
+      first and route Element through it.  On iOS, make sure Onion Browser's
+      Tor VPN is on (Settings → VPN).</li>
+  <li>In Element: <i>Sign in</i> → <i>Edit / Change homeserver</i> → paste the
+      homeserver URL above → enter username and password.  Accept the HTTP
+      warning — it's expected for <code>.onion</code> services.</li>
+</ol>
+
+<p class="muted">If they're going to be in encrypted rooms with the MCP bot,
+they'll need to verify the bot's device once.  See <code>docs/architecture.md</code>.</p>
+
+<p style="margin-top:24px;"><a class="btn" href="/people">Done</a></p>
+{% endblock %}

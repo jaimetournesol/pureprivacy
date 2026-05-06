@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}First-boot setup{% endblock %}
+{% block body %}
+<p class="muted">Welcome.  Pick the credentials for your admin user.  These are
+the credentials you'll log in with from your phone — and to manage this box.</p>
+
+<form method="post" action="/setup" autocomplete="off">
+  <label for="username">Username</label>
+  <input type="text" id="username" name="admin_username" required
+         value="admin" pattern="[a-z0-9_-]+">
+  <p class="muted">Lowercase letters, digits, dash, underscore.</p>
+
+  <label for="password">Password
+    <span style="float:right;font-size:12px;">
+      <a href="#" id="show-password" style="color:var(--accent);text-decoration:none;">show</a>
+      ·
+      <a href="#" id="regen-password" style="color:var(--accent);text-decoration:none;">regenerate</a>
+    </span>
+  </label>
+  <input type="password" id="password" name="admin_password" required
+         minlength="12" value="{{ suggested_password }}">
+  <p class="muted">At least 12 characters.  We've generated a strong one
+  for you — recommended.  Click <i>regenerate</i> for a different one,
+  or paste your own from a password manager.</p>
+
+  <button type="submit">Create my account</button>
+</form>
+
+<script>
+  // Pure client-side helpers: show/hide and regenerate.  No backend round
+  // trip — the suggestion is just a starting point the operator can edit.
+  document.getElementById("show-password").addEventListener("click", function (e) {
+    e.preventDefault();
+    var pw = document.getElementById("password");
+    if (pw.type === "password") { pw.type = "text"; this.textContent = "hide"; }
+    else { pw.type = "password"; this.textContent = "show"; }
+  });
+  document.getElementById("regen-password").addEventListener("click", function (e) {
+    e.preventDefault();
+    // 20 chars, URL-safe alphabet — same shape as wizard.synapse.random_password.
+    var alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+    var arr = new Uint8Array(20);
+    crypto.getRandomValues(arr);
+    var pw = "";
+    for (var i = 0; i < arr.length; i++) pw += alphabet[arr[i] % alphabet.length];
+    document.getElementById("password").value = pw;
+  });
+</script>
+
+<hr>
+
+<h2>What happens next</h2>
+<ol>
+  <li>We register you on this homeserver as <code>@<i>username</i>:{{ onion }}</code>.</li>
+  <li>We create a bot user the MCP server uses to read and write your messages.</li>
+  <li>We show you a QR code so you can transcribe these credentials onto your phone.</li>
+  <li>You'll be able to add other people from the People page.</li>
+</ol>
+<p class="muted">This page only appears once.  After setup, this URL becomes
+a sign-in screen for managing your box.</p>
+{% endblock %}

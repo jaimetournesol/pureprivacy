@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% set active = "people" %}
+{% block title %}Add a person{% endblock %}
+{% block body %}
+<p class="muted"><a href="/people" style="color:var(--accent);">← back to people</a></p>
+
+<h2 style="margin-top:0;">Add a person</h2>
+<p class="muted">Pick a username and password for the new account.  After
+you click <i>Create</i>, you'll see a one-time page with a QR code you can
+hand to them — that's how they sign in from their phone.</p>
+
+{% if error %}
+<div class="alert"><b>{{ error }}</b></div>
+{% endif %}
+
+<form method="post" action="/people/add" autocomplete="off">
+  <label for="username">Username</label>
+  <input type="text" id="username" name="username" required
+         pattern="[a-z0-9_-]+" placeholder="e.g. alice">
+  <p class="muted">Lowercase letters, digits, dash, underscore.</p>
+
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" required
+         minlength="12" value="{{ suggested_password }}">
+  <p class="muted">At least 12 characters.  We've generated one for you —
+  hand the resulting QR to them so they don't have to type it.</p>
+
+  <label style="display:flex;gap:8px;align-items:center;color:var(--fg);">
+    <input type="checkbox" name="make_admin" value="1" style="width:auto;margin:0;">
+    Make this person an admin of this box
+  </label>
+  <p class="muted">Admins can add and remove other people.  Leave unchecked
+  for friends and family.</p>
+
+  <button type="submit">Create account</button>
+</form>
+{% endblock %}
