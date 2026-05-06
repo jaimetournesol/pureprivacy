@@ -33,16 +33,12 @@ media_store_path: "/data/media_store"
 uploads_path: "/data/uploads"
 trusted_key_servers: []
 
-# MatrixRTC (group voice/video) discovery.  Element X clients read this
-# from the well-known JSON Synapse serves at /_matrix/client/v1/well-known.
-# When the `voice` profile is inactive the LiveKit container isn't running,
-# but the well-known still advertises the URL — clients fall back to legacy
-# 1:1 calls in that case.
+# MatrixRTC (group voice/video) discovery.  Rendered conditionally by
+# render_config.py: when the `voice` profile is inactive the LiveKit
+# container isn't running, so we omit the rtc_foci block entirely
+# rather than advertise a service the client will fail to reach.
 serve_server_wellknown: true
-extra_well_known_client_content:
-  org.matrix.msc4143.rtc_foci:
-    - type: livekit
-      livekit_service_url: "http://${SERVER_NAME}:8082"
+${EXTRA_WELL_KNOWN_BLOCK}
 
 experimental_features:
   msc3266_enabled: true
@@ -104,7 +100,12 @@ rc_login:
 federation_verify_certificates: true
 
 # Refuse to dial private IP ranges, except the docker-internal range we
-# need so the container can reach itself.
+# need so Synapse can reach privoxy / fed-proxy / postgres / coturn.
+# 172.16.0.0/12 covers our 172.30.0.0/24 docker subnet, so we whitelist
+# it explicitly — without this, every federation request through privoxy
+# is refused before it ever reaches Tor.
+ip_range_whitelist:
+  - '172.30.0.0/24'
 ip_range_blacklist:
   - '10.0.0.0/8'
   - '172.16.0.0/12'

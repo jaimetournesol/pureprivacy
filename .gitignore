@@ -16,6 +16,9 @@ homeserver.yaml
 *-signing.key
 *-signing.key.bak
 
+# Per-host CLI state (sticky --voice profile, etc.)
+.pureprivacy-profile
+
 # Python
 __pycache__/
 *.py[cod]

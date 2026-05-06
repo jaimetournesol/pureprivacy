@@ -63,9 +63,11 @@ set -euo pipefail
 
 PROJECT="pureprivacy"
 # Resolve through symlinks so `pureprivacy` works whether you call it as
-# ./scripts/pureprivacy or via a symlink on $PATH.
-SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
-    || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+# ./scripts/pureprivacy or via a symlink on $PATH. Prefer GNU readlink
+# (Linux); fall back to Python (macOS / BSD readlink lacks -f); finally
+# the raw path as a last resort.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+    || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
     || echo "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
 # Long-running services we monitor for health.  `init` is a one-shot we
@@ -136,6 +138,13 @@ container_running() {
     docker inspect -f '{{.State.Running}}' "pureprivacy-$1" 2>/dev/null \
         || echo "false"
 }
+
+# Export so the `bash -c …` calls inside cmd_verify (and similar
+# subshell uses) can see the helpers.  Otherwise every `bash -c
+# 'container_running tor'` resolves to "command not found", swallowed
+# by the subshell, and the verify check shows FAIL even though the
+# container is healthy.
+export -f container_running container_health
 
 wait_healthy() {
     local svc="$1"
@@ -209,7 +218,12 @@ cmd_up() {
             *) red "unknown flag: $1"; exit 2 ;;
         esac
     done
-    echo "${voice}" > "${PROFILE_FILE}"
+    # Atomic write: a crash mid-redirect would otherwise truncate the
+    # profile file and the next `up` would read garbage.
+    {
+        printf '%s\n' "${voice}" > "${PROFILE_FILE}.tmp" \
+            && mv "${PROFILE_FILE}.tmp" "${PROFILE_FILE}"
+    } || { red "Could not write ${PROFILE_FILE}"; exit 1; }
 
     # Detect whether this is the first build (no images yet) so we can warn
     # the operator about the long initial wait.
@@ -220,9 +234,14 @@ cmd_up() {
 
     if [[ "${voice}" == "true" ]]; then
         export COMPOSE_PROFILES=voice
+        export VOICE_ENABLED=1
         SERVICES=("${SERVICES[@]}" synapse-fed-proxy livekit lk-jwt)
         bold "Bringing PurePrivacy up (profile: voice)..."
     else
+        # Explicit "0" so a previous shell that exported VOICE_ENABLED=1
+        # for an --voice run can't bleed through into a --no-voice run
+        # via compose's env-passthrough.
+        export VOICE_ENABLED=0
         bold "Bringing PurePrivacy up..."
     fi
     if [[ "${voice_explicit}" == "false" ]] && [[ "${voice}" == "true" ]]; then
@@ -399,7 +418,10 @@ cmd_info() {
         local setup_token
         setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
             | tr -d '[:space:]' || true)"
-        if [[ -n "${setup_token}" ]]; then
+        # Min-length sanity: token_hex(16) → 32 chars.  Anything shorter
+        # is almost certainly an empty-file or stale read; better to omit
+        # than to print a garbage value the operator copies into the form.
+        if [[ -n "${setup_token}" ]] && [[ ${#setup_token} -ge 32 ]]; then
             echo
             bold "One-time setup token:"
             echo "  ${setup_token}"
@@ -475,8 +497,13 @@ except FileNotFoundError:
 }
 
 read_mcp_token() {
-    docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token 2>/dev/null \
-        | tr -d '[:space:]'
+    local t
+    t="$(docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token 2>/dev/null \
+        | tr -d '[:space:]' || true)"
+    if [[ -z "${t}" ]]; then
+        return 1
+    fi
+    printf '%s' "${t}"
 }
 
 print_setup_summary() {
@@ -541,8 +568,17 @@ cli_token() {
     # Read the wizard's CLI auth token (generated at wizard startup).
     # Used by `pair accept` / `pair remove` and the test scripts to bypass
     # cookie-based auth on state-changing routes.  See wizard/auth.py.
-    docker exec pureprivacy-wizard cat /shared/secrets/cli_token 2>/dev/null \
-        | tr -d '[:space:]'
+    # Empty token = wizard not yet up; refuse rather than send "" and get
+    # an opaque 403 response back.
+    local t
+    t="$(docker exec pureprivacy-wizard cat /shared/secrets/cli_token 2>/dev/null \
+        | tr -d '[:space:]' || true)"
+    if [[ -z "${t}" ]]; then
+        red "Could not read /shared/secrets/cli_token from pureprivacy-wizard." >&2
+        red "Is the wizard container up?  Try \`pureprivacy status\`." >&2
+        return 1
+    fi
+    printf '%s' "${t}"
 }
 
 require_setup() {
@@ -739,6 +775,10 @@ else:
             bold "Pairing & restarting Synapse..."
             local body_path
             body_path="$(mktemp)"
+            # Trap so an aborted curl (set -e, network blip) still cleans
+            # the tmp file. Untrap on the success path so we don't shadow
+            # an outer EXIT trap if one is ever added.
+            trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
                 -X POST http://127.0.0.1:8088/pair/accept \
@@ -747,10 +787,10 @@ else:
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
                 red "Pair failed (HTTP ${http}):"
                 head -c 500 "${body_path}" >&2; echo >&2
-                rm -f "${body_path}"
                 exit 1
             fi
             rm -f "${body_path}"
+            trap - EXIT
             green "Paired and Synapse restarted with the new federation list."
             ;;
         remove)
@@ -764,6 +804,7 @@ else:
             bold "Unpairing & restarting Synapse..."
             local body_path
             body_path="$(mktemp)"
+            trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
                 -X POST http://127.0.0.1:8088/pair/remove \
@@ -772,10 +813,10 @@ else:
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
                 red "Unpair failed (HTTP ${http}):"
                 head -c 500 "${body_path}" >&2; echo >&2
-                rm -f "${body_path}"
                 exit 1
             fi
             rm -f "${body_path}"
+            trap - EXIT
             green "Unpaired ${onion} and Synapse restarted."
             ;;
         ""|help|-h|--help)
@@ -896,13 +937,14 @@ PY
     local setup_token
     setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
         | tr -d '[:space:]' || true)"
-    if [[ -z "${setup_token}" ]]; then
-        red "Setup token not found at /shared/secrets/setup_token."
+    if [[ -z "${setup_token}" ]] || [[ ${#setup_token} -lt 32 ]]; then
+        red "Setup token not found (or unreadably short) at /shared/secrets/setup_token."
         red "Either setup is already complete or the wizard hasn't started."
         exit 1
     fi
     local body_path
     body_path="$(mktemp)"
+    trap 'rm -f "${body_path}"' EXIT
     local code
     code="$(curl -s -o "${body_path}" -w '%{http_code}' \
         -X POST http://127.0.0.1:8088/setup \
@@ -912,10 +954,10 @@ PY
     if [[ "${code}" != "303" ]] && [[ "${code}" != "200" ]]; then
         red "Setup failed (HTTP ${code}):"
         head -c 500 "${body_path}" >&2; echo >&2
-        rm -f "${body_path}"
         exit 1
     fi
     rm -f "${body_path}"
+    trap - EXIT
 
     print_setup_summary "true"
     dim "Save the password and bearer token now — \`pureprivacy info --secrets\` will reveal them again later, but treat that command as sensitive."

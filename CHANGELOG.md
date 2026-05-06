@@ -6,6 +6,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (post-hardening review)
+
+A second audit pass after the v0.1.0 hardening exposed a set of bugs
+that the unit tests didn't reach because they don't import the
+top-level wizard app or rebuild the docker images.  Every item below
+was verified by bringing the full stack down and back up, then running
+all six test layers green (Python unit + e2e + features + restart +
+health + backup).
+
+- **Wizard crash-loop on rebuild.** `wizard/server.py` referenced
+  `csrf.csrf_protect` (the bare module attribute) on `/logout`, but
+  `csrf.py` only exports a factory `make_csrf_protect()`.  The bound
+  closure `_csrf_protect` was the right reference.  The running image
+  predated the regression so production didn't show it; the next
+  rebuild would have.  Added `tests/test_server_import.py` to fail
+  fast on the same class of regression.
+- **`/rotate-token` 422'd for CLI requests.** `csrf_protect` declared
+  `csrf_token: str = Form("")` which made FastAPI parse a form body
+  before the CLI-token bypass could run — bodyless POSTs from
+  `pureprivacy admin rotate-*` and the test scripts failed.  Rewrote
+  `csrf_protect` to read the form lazily, only on the browser path.
+- **FastAPI mis-classified the dependency's `request` param.** With
+  `from __future__ import annotations`, the inner factory's
+  `request: Request` annotation is a string FastAPI's introspector
+  can't resolve, so it was treated as a Query parameter and produced
+  `{"missing","loc":["query","request"]}` 422s.  Set an explicit
+  `__signature__` on the dep so FastAPI sees a real `Request` type.
+- **`cap_drop: ALL` broke fresh-volume init for postgres / synapse /
+  tor / coturn.** The hardening pass dropped every capability from
+  every container, but those upstream images run their entrypoint as
+  root, chown/chmod the data dir, then `gosu`-drop to a service user
+  — which needs `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`,
+  `SETGID`.  Symptoms on a fresh volume: `Operation not permitted` on
+  `chmod /var/lib/postgresql/data`, `Permission denied` writing
+  `/data/homeserver.yaml`.  Added an `*init-caps` YAML anchor and
+  merged into all four services.
+- **Coturn couldn't even `exec`.** The turnserver binary ships with
+  `cap_net_bind_service=ep` as a file capability; with cap_drop:ALL
+  the kernel refused `execve` because the file caps weren't in the
+  process bounding set (`/usr/bin/turnserver: Operation not
+  permitted`).  Added `NET_BIND_SERVICE` to coturn's `cap_add`.
+  no-new-privileges still prevents the file caps from being applied,
+  so the running effective set stays small.
+- **MCP container couldn't read its own secrets.** The hardening pass
+  added `USER 10001` to `mcp-server/Dockerfile`, but `init` writes
+  `/shared/secrets/*` mode 0600 root-owned.  UID 10001 then can't
+  read `mcp_bearer_token` or `mcp_bot_credentials.json`, and on
+  upgrade can't read pre-existing 10001-owned files either (because
+  cap_drop:ALL strips DAC_OVERRIDE).  Reverted to root inside the
+  container — with `cap_drop: ALL`, `read_only: true`,
+  `no-new-privileges: true`, in-container root has no usable
+  privileges on the host, and avoids the cross-container ownership
+  footgun.
+- **Synapse refused federation through privoxy.**
+  `homeserver.yaml.tmpl` listed `172.16.0.0/12` in
+  `ip_range_blacklist`, which covers the docker subnet
+  `172.30.0.0/24` Synapse uses to reach privoxy / fed-proxy /
+  postgres / coturn.  Synapse applies the blacklist to its HTTP
+  client (federation, well-known, key servers, media) and refused
+  outbound to the proxy IP before it ever reached Tor.  Added
+  `ip_range_whitelist: ['172.30.0.0/24']` to override.
+- **`pureprivacy verify` falsely reported FAIL on healthy services.**
+  The `bash -c '[[ $(container_running tor) … ]]'` calls spawned a
+  subshell that didn't inherit the helper functions, so they
+  resolved to "command not found" and the assertions failed silently.
+  Added `export -f container_running container_health`.
+- **Synapse advertised a livekit URL clients couldn't reach.** The
+  `extra_well_known_client_content.org.matrix.msc4143.rtc_foci` block
+  was rendered unconditionally; without `--voice`, livekit isn't
+  running and Element X clients hammered an unreachable URL.  Made
+  the block conditional on a `VOICE_ENABLED` env var (set by
+  `pureprivacy up --voice`, propagated through compose).
+- **Sync loop self-restart bug in `MatrixBot`.** A non-cancellation
+  exception in `_sync_forever` spawned a fresh task and returned;
+  the parent task pointer became stale and the bot silently stopped
+  syncing.  Moved the try/except inside the loop.
+- **Friendly errors instead of raw `KeyError` in MCP tools.**
+  `bot.room(room_id)` raises `KeyError` when the bot isn't in the
+  room; the MCP transport surfaced that as an opaque 500.  Wrapped
+  in `_resolve_room()` which converts to a `ValueError` with an
+  actionable message ("invite @pureprivacy-mcp to the room first").
+- **MCP config no longer crash-loops on a corrupt credentials file.**
+  `json.loads(open(creds_path))` was unguarded; a partial write left
+  by a wizard crash would `JSONDecodeError` at startup.  Now logs and
+  treats the container as "wizard hasn't run yet."  Same treatment
+  for a corrupt `session.json` in `MatrixBot.start()`.
+- **`pureprivacy up && reboot` could deadlock on systemd.** The unit
+  declared `After=docker.service` but not Docker readiness;
+  `pureprivacy up` could fire before the docker socket was actually
+  serving.  Added an `ExecStartPre` that polls `docker info` for up
+  to 120 s before declaring the unit started.
+- **`install-systemd.sh` could install a unit pointing at the wrong
+  path.** A future refactor that moved the `/opt/pureprivacy`
+  placeholder would leave the `sed` rewrite a silent no-op.  Added
+  pre- and post-validation around the substitution.
+- **`scripts/install.sh` and friends preferred `python3` over
+  `readlink -f` for symlink resolution.** Flipped the priority so
+  GNU `readlink -f` is primary on Linux, with `python3` as the macOS
+  fallback.  Eliminates a "Python missing → idempotent install
+  silently writes the wrong link" foot-gun.
+- **`mktemp` files leaked from `pair accept` / `pair remove` /
+  `init`.** Added `trap 'rm -f …' EXIT` around each one so an aborted
+  curl (under `set -e`, network blip) doesn't leave temp files
+  behind.
+- **`.pureprivacy-profile` was written non-atomically.** A crash mid-
+  redirect would truncate the file and the next `pureprivacy up`
+  would read garbage.  Switched to temp-write + rename.
+- **Empty-token guards on `tr -d '[:space:]'` reads.** The CLI's
+  `read_mcp_token`, `cli_token`, and `setup_token` reads silently
+  returned "" on partial / empty files.  Now refuse with an
+  actionable error when the token is missing or shorter than 32
+  chars.
+- **`pureprivacy/livekit` Dockerfile advertised UDP ports the SFU
+  never binds.** Removed `EXPOSE 50000-50019/udp` and the
+  `port_range_*` block from `livekit.yaml.tmpl` — Tor can't carry
+  UDP, the config already forces TCP relay via `tcp_port: 7881`,
+  and the well-known is now opt-in anyway.  Coturn's separate
+  49152-49161 TCP range (which IS exposed via Tor) is unchanged.
+- **`test-all.sh` claimed "all tests PASSED" when layers were
+  skipped.** Added a `summarize()` helper that emits a yellow ⚠
+  when `PUREPRIVACY_NO_DOCKER=1` or no Python ≥ 3.10 is available.
+  Also extended Layer 1 to run `mcp-server/tests/` alongside the
+  wizard tests.
+- **`test-health.sh` SIGKILL test was permanently broken.**
+  Docker 29.x treats `docker kill --signal=SIGKILL` as a user-
+  initiated stop and bypasses `unless-stopped`, and Synapse's Python
+  interpreter catches SIGABRT/SIGSEGV.  Reworked the test to assert
+  the *policy* is correctly declared on every long-running service
+  rather than try to trigger an unrecoverable crash from the test
+  harness.
+- **Misc docs.** `docs/voice.md` no longer says Element X is the only
+  client for 1:1 voice (both clients work);
+  `docs/mcp-integration.md` calls out the colon-vs-equals difference
+  between Claude Code's `--header "Authorization: Bearer …"` and
+  Codex's `--header "Authorization=Bearer …"`; README adds
+  `pureprivacy wait`; CHANGELOG voice-scope claim no longer
+  contradicts the shipping `--voice` profile; `SECURITY.md`
+  reporting address points at GitHub Security Advisories instead of
+  a `<your-domain>` placeholder.
+
 ### Security
 
 Hardening pass before tagging v0.1.0. Findings IDs reference the
@@ -274,6 +414,9 @@ First public release.
 See [SECURITY.md](SECURITY.md) for the full list. Highlights:
 - The MCP bot user holds Megolm keys for any room it has been invited to —
   treat it as a trusted device.
-- Group voice (MatrixRTC / LiveKit) is out of scope for v0.1.
+- Group voice (MatrixRTC / LiveKit) ships behind the opt-in `voice`
+  compose profile (`pureprivacy up --voice`); it is not on by default
+  in v0.1 and is the rougher path of the two voice surfaces — see
+  [docs/voice.md](docs/voice.md) for the Tor-imposed caveats.
 - Federation is technically possible but not the v0.1 hero path.
 - The wizard does not re-key after compromise; rotate manually.

@@ -7,8 +7,10 @@ bind_addresses:
 
 rtc:
   tcp_port: 7881
-  port_range_start: 50000
-  port_range_end: 50019
+  # The UDP port_range_* settings would only matter for direct WebRTC
+  # peer-to-peer; we force TCP relay below, so the UDP range is unused.
+  # Leave the keys out so the config doesn't promise a UDP listener that
+  # never binds.
   use_external_ip: false
   # Force TCP relay so the WebRTC media path can ride Tor's hidden-service
   # tunnel.  This adds latency (~100-300 ms above clearnet) but keeps the

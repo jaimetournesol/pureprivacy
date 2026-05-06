@@ -66,7 +66,11 @@ step "backing up to ${BACKUP_DIR}/snapshot.tar.gz"
 TARBALL="${BACKUP_DIR}/snapshot.tar.gz"
 ./scripts/pureprivacy backup "${TARBALL}" >/dev/null
 [[ -s "${TARBALL}" ]] || fail "backup tarball is empty"
-green "  backup wrote $(du -h "${TARBALL}" | awk '{print $1}')"
+# Stash du's output before piping to awk: with `set -o pipefail`, awk
+# closing the pipe early can turn a transient du stderr into an exit
+# 141 that kills the whole test.
+DU_OUT="$(du -h "${TARBALL}")" || fail "du failed for ${TARBALL}"
+green "  backup wrote $(awk '{print $1}' <<<"${DU_OUT}")"
 
 # Backup briefly stops the stack; bring it back so Step 3 works.
 ./scripts/pureprivacy up >/dev/null

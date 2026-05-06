@@ -19,8 +19,14 @@ cd "${ROOT_DIR}"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
 bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 hr()    { printf '%s\n' '────────────────────────────────────────────'; }
+
+# Set to "1" if any layer was skipped so the final summary can stay
+# honest: "✓ all available tests" hides the fact that the unit test
+# layer (or the docker-dependent layers) was never actually run.
+ANY_LAYER_SKIPPED=0
 
 # Pick a Python with dataclass(slots=True) support — wizard's modules
 # require Python 3.10+.  Fall back to whatever python3 is on PATH.
@@ -35,25 +41,38 @@ for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
 done
 if [[ -z "${PYBIN}" ]]; then
     red "no Python ≥ 3.10 found on PATH; skipping unit tests"
+    ANY_LAYER_SKIPPED=1
 fi
 
 bold "=== Layer 1: Python unit tests ==="
 if [[ -n "${PYBIN}" ]]; then
     (cd wizard && PYTHONPATH=src "${PYBIN}" -m unittest discover -s tests -v)
+    (cd mcp-server && PYTHONPATH=src "${PYBIN}" -m unittest discover -s tests -v)
 else
     red "  skipped (no python ≥ 3.10)"
 fi
 
 hr
 
+summarize() {
+    if [[ "${ANY_LAYER_SKIPPED}" == "1" ]]; then
+        yellow "⚠ ran some test layers; others were skipped — see notes above."
+    else
+        green "✓ all test layers PASSED"
+    fi
+}
+
 if [[ "${PUREPRIVACY_NO_DOCKER:-0}" == "1" ]]; then
     bold "=== Skipping docker-dependent tests (PUREPRIVACY_NO_DOCKER=1) ==="
-    green "✓ all available tests PASSED"
+    ANY_LAYER_SKIPPED=1
+    summarize
     exit 0
 fi
 
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     red "docker not available; skipping integration tests"
+    ANY_LAYER_SKIPPED=1
+    summarize
     exit 0
 fi
 
@@ -77,4 +96,4 @@ bold "=== Layer 6: backup/restore round-trip (test-backup.sh) ==="
 ./scripts/test-backup.sh
 hr
 
-green "✓ all test layers PASSED"
+summarize

@@ -3,8 +3,8 @@
 # Linux only.  Run as root or via sudo.
 set -euo pipefail
 
-SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
-    || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+    || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
     || echo "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
 TARGET_DIR="${TARGET_DIR:-/opt/pureprivacy}"
@@ -45,8 +45,30 @@ if [[ "${ROOT_DIR}" != "${TARGET_DIR}" ]]; then
     fi
 fi
 
-cp "${ROOT_DIR}/systemd/pureprivacy.service" "${UNIT_DIR}/pureprivacy.service"
-sed -i "s|/opt/pureprivacy|${TARGET_DIR}|g" "${UNIT_DIR}/pureprivacy.service"
+SRC_UNIT="${ROOT_DIR}/systemd/pureprivacy.service"
+DST_UNIT="${UNIT_DIR}/pureprivacy.service"
+
+# Sanity-check that the template still uses the placeholder we expect.
+# A future refactor that moves the path string would otherwise leave the
+# installed unit silently wrong (pointing at /opt/pureprivacy on a host
+# where TARGET_DIR is something else).
+if ! grep -q "/opt/pureprivacy" "${SRC_UNIT}"; then
+    echo "Template ${SRC_UNIT} no longer contains '/opt/pureprivacy'."
+    echo "Refusing to install — the placeholder path the installer rewrites is gone."
+    exit 1
+fi
+
+cp "${SRC_UNIT}" "${DST_UNIT}"
+sed -i "s|/opt/pureprivacy|${TARGET_DIR}|g" "${DST_UNIT}"
+
+# Verify the rewrite landed.  If TARGET_DIR happened to equal
+# /opt/pureprivacy this is a no-op and that's fine.
+if [[ "${TARGET_DIR}" != "/opt/pureprivacy" ]] \
+   && grep -q "/opt/pureprivacy" "${DST_UNIT}"; then
+    echo "sed rewrite did not replace every /opt/pureprivacy in ${DST_UNIT}."
+    echo "The installed unit would point at the wrong path; refusing to enable."
+    exit 1
+fi
 
 systemctl daemon-reload
 systemctl enable pureprivacy.service

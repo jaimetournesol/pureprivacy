@@ -11,6 +11,14 @@ RemainAfterExit=yes
 
 # Edit WorkingDirectory to wherever you cloned the repo on this host.
 WorkingDirectory=/opt/pureprivacy
+
+# `After=docker.service` only sequences ordering — the docker socket may
+# still be unresponsive when our unit fires (Docker forks a long-lived
+# daemon and signals readiness before its API is fully serving).  Block
+# until `docker info` actually succeeds, capped so a wedged docker
+# doesn't hang the boot indefinitely.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do docker info >/dev/null 2>&1 && exit 0; sleep 2; done; echo "docker daemon not ready after 120s" >&2; exit 1'
+
 ExecStart=/opt/pureprivacy/scripts/pureprivacy up
 ExecStop=/opt/pureprivacy/scripts/pureprivacy stop
 

@@ -17,14 +17,17 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app/src
 
-# Non-root account for the MCP process. /data is a named docker volume:
-# we pre-create the mountpoint with the right ownership so the first-time
-# volume copy preserves it.  Defense in depth on top of read_only +
-# cap_drop in compose.
-RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin mcp \
-    && mkdir -p /data /data/uploads /data/store \
-    && chown -R 10001:10001 /data
-USER 10001:10001
+# Pre-create the data dirs so the volume copy-on-mount lays them down
+# inside the named volume on first boot.  We deliberately do NOT add a
+# USER 10001 directive here: the container reads
+# /shared/secrets/mcp_bearer_token (mode 0600, root-owned, written by
+# the init container) and /shared/secrets/mcp_bot_credentials.json
+# (same).  A non-root in-container user can't read those without us
+# loosening permissions on the on-disk secrets — bad trade.  The
+# compose file pins this container at cap_drop:ALL +
+# no-new-privileges:true + read_only:true; root inside that sandbox has
+# no usable privileges on the host, so it's the cleaner posture.
+RUN mkdir -p /data /data/uploads /data/store
 
 EXPOSE 8089
 CMD ["python", "-m", "pureprivacy_mcp"]

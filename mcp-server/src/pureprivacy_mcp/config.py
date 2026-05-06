@@ -51,12 +51,27 @@ class Config:
         creds_path = shared_dir / "secrets" / "mcp_bot_credentials.json"
         credentials: Optional[BotCredentials] = None
         if creds_path.is_file():
-            data = json.loads(creds_path.read_text(encoding="utf-8"))
-            credentials = BotCredentials(
-                homeserver_url=data["homeserver_url"],
-                user_id=data["user_id"],
-                password=data["password"],
-            )
+            # A corrupt/partial credentials file means the wizard wrote it
+            # mid-flight or someone hand-edited it.  Treat it as "not yet
+            # configured" rather than crash-looping the container — the
+            # wizard rewrites it atomically on every setup.
+            try:
+                raw = creds_path.read_text(encoding="utf-8")
+                data = json.loads(raw)
+                credentials = BotCredentials(
+                    homeserver_url=data["homeserver_url"],
+                    user_id=data["user_id"],
+                    password=data["password"],
+                )
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                # Fall through to credentials=None; the bot will keep
+                # waiting for the wizard.  Log so the operator can spot it
+                # in `pureprivacy logs mcp`.
+                import logging
+                logging.getLogger("pureprivacy.config").warning(
+                    "ignoring malformed %s: %s — waiting for wizard to rewrite it",
+                    creds_path, exc,
+                )
 
         raw_allow = os.environ.get("MCP_INVITE_ALLOWLIST", "").strip()
         invite_allowlist = frozenset(

@@ -86,6 +86,13 @@ codex mcp add pureprivacy \
   --header "Authorization=Bearer <token>"
 ```
 
+> Note the **equals sign** — `Authorization=Bearer <token>` — not a
+> colon.  Codex's `--header` parses `key=value` pairs (and emits a
+> proper `Authorization: Bearer …` header on the wire); Claude Code's
+> `--header`, by contrast, expects the literal HTTP header line
+> `Authorization: Bearer …` with a colon.  Same outcome over HTTP,
+> different CLI syntax — copy-paste exactly as shown.
+
 (`codex mcp` syntax has been moving — if the above doesn't work in your
 Codex version, run `codex mcp --help` to see the current flags.)
 

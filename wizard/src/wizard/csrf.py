@@ -133,21 +133,56 @@ def make_csrf_protect(shared_dir: Path):
 
     Imports FastAPI lazily so the rest of this module can be unit-tested
     without the FastAPI dependency.
+
+    The CLI-token bypass has to happen *before* FastAPI parses the
+    request body for a `csrf_token` form field — the pureprivacy CLI
+    issues bodyless POSTs (e.g. `/rotate-token`) and a `Form()` default
+    would 422 them with "Field required" before the bypass is even
+    considered.  So we read the body ourselves only when we actually
+    need the CSRF token (browser path).
     """
-    from fastapi import Form, HTTPException, Request
+    from fastapi import HTTPException
+    from fastapi import Request as _Request
 
     from . import auth
 
-    def csrf_protect(
-        request: Request,
-        csrf_token: str = Form(""),
-    ) -> None:
+    # NOTE: with `from __future__ import annotations` at the top of this
+    # module, function annotations are strings.  FastAPI's dependency
+    # analyzer does not resolve string annotations on inner functions,
+    # so a naive `request: Request` parameter ends up classified as a
+    # query parameter (treated as `Query(...)` by name) and the
+    # endpoint 422s with "request: Field required".  Build the
+    # signature explicitly so FastAPI sees a real `Request` type.
+    import inspect
+
+    async def csrf_protect(request):  # type set below via __signature__
         cli_header = request.headers.get(auth.CLI_TOKEN_HEADER)
         if cli_header and auth.cli_token_matches(shared_dir, cli_header):
             return
         if not origin_matches(request):
             raise HTTPException(403, "Origin/Referer mismatch")
-        if not verify_token(shared_dir, csrf_token):
+        # Browser path: read the form body explicitly.  Starlette's
+        # request.form() parses application/x-www-form-urlencoded /
+        # multipart and returns a multidict.
+        try:
+            form = await request.form()
+        except Exception:  # pragma: no cover — malformed body
+            form = {}
+        token = form.get("csrf_token", "") if form else ""
+        if not isinstance(token, str):
+            token = ""
+        if not verify_token(shared_dir, token):
             raise HTTPException(403, "CSRF token invalid or expired")
 
+    # Set a real (non-string) signature so FastAPI resolves `request`
+    # as the Starlette/FastAPI Request rather than a query param.
+    csrf_protect.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter(
+                "request",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=_Request,
+            )
+        ]
+    )
     return csrf_protect

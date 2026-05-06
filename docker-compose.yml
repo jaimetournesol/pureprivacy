@@ -27,6 +27,20 @@ x-hardening: &default-hardening
   security_opt:
     - no-new-privileges:true
 
+# Capabilities every "root-init, drop-privileges-via-gosu" upstream image
+# needs.  Postgres, Synapse, Tor, Coturn all run their entrypoint as
+# root, chown/chmod the data dir + bind ports, then setuid to a service
+# user.  Without these, fresh-volume container starts fail with
+# "Operation not permitted" / "Permission denied" — which is exactly
+# what happened when the cap_drop:ALL hardening landed in dc477fb.
+x-init-caps: &init-caps
+  cap_add:
+    - CHOWN          # chown -R data dir to service user
+    - DAC_OVERRIDE   # root writes to service-user-owned files
+    - FOWNER         # chmod files we don't own
+    - SETUID         # gosu / start.py drop privs
+    - SETGID         # ditto
+
 services:
   # One-shot: generates secrets into the shared volume on first boot.
   # Idempotent: subsequent runs are no-ops if the secret files already exist.
@@ -43,7 +57,7 @@ services:
       - pureprivacy_net
 
   tor:
-    <<: [*default-restart, *default-hardening]
+    <<: [*default-restart, *default-hardening, *init-caps]
     container_name: pureprivacy-tor
     build:
       context: ./docker/tor
@@ -82,7 +96,7 @@ services:
       start_period: 5s
 
   postgres:
-    <<: [*default-restart, *default-hardening]
+    <<: [*default-restart, *default-hardening, *init-caps]
     container_name: pureprivacy-postgres
     image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
     depends_on:
@@ -108,7 +122,7 @@ services:
       start_period: 10s
 
   synapse:
-    <<: [*default-restart, *default-hardening]
+    <<: [*default-restart, *default-hardening, *init-caps]
     container_name: pureprivacy-synapse
     build:
       context: ./docker/synapse
@@ -127,6 +141,11 @@ services:
       HTTPS_PROXY: "http://privoxy:8118"
       HTTP_PROXY: "http://privoxy:8118"
       NO_PROXY: "localhost,127.0.0.1,postgres,coturn,wizard,mcp,172.30.0.0/24"
+      # Set to 1 by `pureprivacy up --voice`; render_config.py uses it
+      # to decide whether to advertise the rtc_foci well-known block.
+      # Off by default so non-voice deployments don't tell Element X to
+      # try connecting to a livekit container that isn't running.
+      VOICE_ENABLED: "${VOICE_ENABLED:-0}"
     volumes:
       - synapse_data:/data
       - shared:/shared:ro
@@ -141,7 +160,21 @@ services:
       start_period: 180s
 
   coturn:
-    <<: [*default-restart, *default-hardening]
+    <<: [*default-restart, *default-hardening, *init-caps]
+    # The turnserver binary ships with `cap_net_bind_service=ep` as a
+    # file capability.  With cap_drop:ALL + no-new-privileges:true, the
+    # kernel refuses to exec a binary whose file caps aren't in the
+    # process bounding set ("Operation not permitted").  Adding the
+    # cap here puts it in the bounding set so the exec is allowed.
+    # (no-new-privs still prevents the file caps from being applied,
+    # so the process effective set stays small.)
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     container_name: pureprivacy-coturn
     build:
       context: ./docker/coturn

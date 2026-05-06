@@ -373,7 +373,7 @@ def login_submit(
 
 
 @app.post("/logout")
-def logout(_csrf: None = Depends(csrf.csrf_protect)) -> Response:
+def logout(_csrf: None = Depends(_csrf_protect)) -> Response:
     response = RedirectResponse("/login", status_code=303)
     auth.clear_session_cookie(response)
     return response

@@ -5,9 +5,12 @@ group voice is opt-in behind the `voice` compose profile.
 
 ## 1:1 voice (default, always on)
 
-Element X uses the standard Matrix VoIP signaling: an `m.call.invite`
-event in the room kicks off a WebRTC peer connection, and Coturn
-provides TURN/STUN for NAT traversal.
+Both the original Element and Element X use the standard Matrix VoIP
+signaling: an `m.call.invite` event in the room kicks off a WebRTC
+peer connection, and Coturn provides TURN/STUN for NAT traversal.
+(For v0.1 we recommend the original Element overall — see
+[docs/phone-setup.md](phone-setup.md) — but 1:1 voice works the same
+in both clients.)
 
 Coturn is configured for **TCP-only relay**, so all audio rides through
 Tor's hidden service.  That works but adds latency: expect 200–400 ms

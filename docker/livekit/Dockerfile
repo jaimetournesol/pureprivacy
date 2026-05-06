@@ -9,6 +9,9 @@ COPY livekit.yaml.tmpl /pureprivacy/livekit.yaml.tmpl
 COPY entrypoint.sh /pureprivacy/entrypoint.sh
 RUN chmod 0755 /pureprivacy/entrypoint.sh
 
-EXPOSE 7880 7881 50000-50019/udp
+# Tor-only mode: livekit.yaml.tmpl forces TCP relay (UDP cannot ride a
+# hidden service), so we deliberately do NOT expose the WebRTC UDP
+# range — it would advertise ports that are never bound.
+EXPOSE 7880 7881
 
 ENTRYPOINT ["/pureprivacy/entrypoint.sh"]

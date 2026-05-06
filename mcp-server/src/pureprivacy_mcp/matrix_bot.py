@@ -78,11 +78,28 @@ class MatrixBot:
 
     async def start(self) -> None:
         """Log in (or restore session) and begin syncing in the background."""
+        session_data = None
         if self.session_path.is_file():
-            data = json.loads(self.session_path.read_text(encoding="utf-8"))
-            self.client.access_token = data["access_token"]
-            self.client.user_id = data["user_id"]
-            self.client.device_id = data["device_id"]
+            try:
+                session_data = json.loads(
+                    self.session_path.read_text(encoding="utf-8")
+                )
+                # Validate: a partial file (e.g. crash mid-write) shows up
+                # here as a missing key.  Discard and log in fresh rather
+                # than handing matrix-nio None for an access token.
+                for key in ("access_token", "user_id", "device_id"):
+                    if not session_data.get(key):
+                        raise ValueError(f"missing/empty {key}")
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                log.warning(
+                    "discarding corrupt session at %s (%s); logging in fresh",
+                    self.session_path, exc,
+                )
+                session_data = None
+        if session_data is not None:
+            self.client.access_token = session_data["access_token"]
+            self.client.user_id = session_data["user_id"]
+            self.client.device_id = session_data["device_id"]
             log.info(
                 "restored session for %s device=%s",
                 self.client.user_id,
@@ -159,9 +176,15 @@ class MatrixBot:
         await self.client.close()
 
     async def _sync_forever(self) -> None:
-        """Continuously sync; mark ready after first sync completes."""
-        try:
-            while True:
+        """Continuously sync; mark ready after first sync completes.
+
+        Wraps a try/except *inside* the loop so a transient nio exception
+        doesn't end the coroutine.  An earlier version spawned a fresh
+        task on exception and returned; that left ``self._sync_task``
+        pointing at the dead parent and silently lost the loop.
+        """
+        while True:
+            try:
                 resp = await self.client.sync(timeout=30000, full_state=False)
                 if isinstance(resp, SyncResponse):
                     if not self._ready.is_set():
@@ -170,12 +193,11 @@ class MatrixBot:
                 else:
                     log.warning("sync error: %s; sleeping 5s", resp)
                     await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("sync loop died; restarting in 10s")
-            await asyncio.sleep(10)
-            self._sync_task = asyncio.create_task(self._sync_forever())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("sync iteration failed; sleeping 10s and retrying")
+                await asyncio.sleep(10)
 
     # ---- helpers used by the tool layer ------------------------------------
 

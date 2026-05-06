@@ -41,6 +41,25 @@ def cert_verification_whitelist(peers: list[str]) -> list[str]:
     return [p for p in peers if p.endswith(".onion")]
 
 
+def well_known_block(own_server: str) -> str:
+    """Render the rtc_foci well-known block iff voice profile is active.
+
+    `VOICE_ENABLED=1` is exported by the pureprivacy CLI when the user
+    runs `up --voice` and propagated to synapse via compose.  When voice
+    is off, returning an empty string omits the whole `extra_well_known
+    _client_content` key — clients fall back cleanly instead of probing
+    a livekit URL that returns connection refused.
+    """
+    if os.environ.get("VOICE_ENABLED", "0").lower() not in ("1", "true", "yes"):
+        return ""
+    return (
+        "extra_well_known_client_content:\n"
+        "  org.matrix.msc4143.rtc_foci:\n"
+        "    - type: livekit\n"
+        f"      livekit_service_url: \"http://{own_server}:8082\"\n"
+    )
+
+
 def main() -> None:
     template_src = TEMPLATE.read_text(encoding="utf-8")
 
@@ -63,6 +82,7 @@ def main() -> None:
         TURN_SHARED_SECRET=os.environ["TURN_SHARED_SECRET"],
         FEDERATION_DOMAIN_WHITELIST=fed_whitelist,
         FEDERATION_CERT_WHITELIST=cert_whitelist,
+        EXTRA_WELL_KNOWN_BLOCK=well_known_block(own_server),
     )
     sys.stdout.write(rendered)
 

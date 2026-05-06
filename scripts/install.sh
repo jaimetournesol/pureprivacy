@@ -5,8 +5,16 @@
 set -euo pipefail
 
 # Resolve through symlinks so the install picks up the real repo even when
-# this script itself is being run via a symlink.
-SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
+# this script itself is being run via a symlink. Prefer `readlink -f`
+# (always present on Linux); fall back to Python on macOS where BSD
+# readlink lacks -f. Failing both, use the raw path as a last resort.
+if SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)" && [[ -n "${SCRIPT_PATH}" ]]; then
+    :
+elif SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null)" && [[ -n "${SCRIPT_PATH}" ]]; then
+    :
+else
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+fi
 ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
 TARGET="${ROOT_DIR}/scripts/pureprivacy"
 
@@ -71,8 +79,14 @@ fi
 
 LINK="${LINK_DIR}/pureprivacy"
 
+resolve_link() {
+    readlink -f "$1" 2>/dev/null \
+        || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null \
+        || echo "$1"
+}
+
 # If the link already points where we want, skip the work.
-if [[ -L "${LINK}" ]] && [[ "$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${LINK}")" == "${TARGET}" ]]; then
+if [[ -L "${LINK}" ]] && [[ "$(resolve_link "${LINK}")" == "${TARGET}" ]]; then
     green "Already installed at ${LINK} → ${TARGET}"
 elif [[ -e "${LINK}" ]] && [[ ! -L "${LINK}" ]]; then
     red "${LINK} exists and is not a symlink.  Move it aside and re-run."

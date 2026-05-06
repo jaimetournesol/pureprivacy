@@ -76,6 +76,7 @@ pureprivacy status     # health, onion, setup state
 pureprivacy info       # onion URL, MCP endpoint, where to point your phone
 pureprivacy info --secrets    # also dump admin password + MCP bearer + recovery key
 pureprivacy verify     # actively probe each service end-to-end
+pureprivacy wait       # block until every service is healthy (good for scripts)
 pureprivacy logs       # tail every service
 pureprivacy logs synapse           # one of: tor, privoxy, postgres, synapse,
                                    # coturn, wizard, mcp (or with --voice:

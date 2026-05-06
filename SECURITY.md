@@ -3,9 +3,8 @@
 ## Reporting a vulnerability
 
 If you find a security bug in PurePrivacy, please **do not open a public issue**.
-Email the maintainers at `security@<your-domain>` (or open a
-[GitHub Security Advisory](https://docs.github.com/en/code-security/security-advisories)
-on the repository) with:
+Open a [GitHub Security Advisory](https://github.com/jaimetournesol/pureprivacy/security/advisories/new)
+on the repository (preferred — works without a separate email channel) with:
 
 - A description of the issue
 - Steps to reproduce

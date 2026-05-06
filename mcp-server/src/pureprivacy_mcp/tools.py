@@ -46,6 +46,22 @@ def register_tools(
             )
         return bot
 
+    def _resolve_room(bot: MatrixBot, room_id: str):
+        """Look up a room and convert KeyError into a friendly ValueError.
+
+        bot.room() raises KeyError to signal "the bot has not been
+        invited to that room" — the MCP transport surfaces that as a raw
+        500.  Convert here so the LLM sees an actionable message.
+        """
+        try:
+            return bot.room(room_id)
+        except KeyError:
+            raise ValueError(
+                f"PurePrivacy bot has no record of room {room_id!r}. "
+                "Invite @pureprivacy-mcp to the room from your Matrix "
+                "client first, then retry."
+            ) from None
+
     @mcp.tool()
     async def list_rooms() -> dict[str, Any]:
         """List every room the PurePrivacy bot is a member of.
@@ -83,7 +99,7 @@ def register_tools(
         bot = _require_ready()
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
-        room = bot.room(room_id)
+        room = _resolve_room(bot, room_id)
         resp = await bot.client.room_messages(
             room.room_id, start=bot.client.next_batch or "", limit=limit
         )
@@ -138,7 +154,7 @@ def register_tools(
         unsanitized markup into other clients.
         """
         bot = _require_ready()
-        room = bot.room(room_id)
+        room = _resolve_room(bot, room_id)
         content = {
             "msgtype": "m.text",
             "body": body,
@@ -158,7 +174,7 @@ def register_tools(
     async def get_room_members(room_id: str) -> dict[str, Any]:
         """List the user IDs and display names in a room."""
         bot = _require_ready()
-        room = bot.room(room_id)
+        room = _resolve_room(bot, room_id)
         members = []
         for user_id, user in room.users.items():
             members.append(
@@ -174,7 +190,7 @@ def register_tools(
     async def mark_read(room_id: str, event_id: str) -> dict[str, Any]:
         """Move the read marker for a room up to the given event."""
         bot = _require_ready()
-        room = bot.room(room_id)
+        room = _resolve_room(bot, room_id)
         await bot.client.room_read_markers(
             room.room_id,
             fully_read_event=event_id,
@@ -196,7 +212,7 @@ def register_tools(
         Absolute paths or `..` traversal that escapes the jail are refused.
         """
         bot = _require_ready()
-        room = bot.room(room_id)
+        room = _resolve_room(bot, room_id)
         upload_path = jail_path(cfg.uploads_dir, path)
         if not upload_path.is_file():
             raise ValueError(f"upload_file: not a regular file: {path!r}")

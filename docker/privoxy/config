@@ -6,6 +6,13 @@
 
 confdir /etc/privoxy
 logdir /var/log/privoxy
+# Bind on every container interface so other services on the
+# pureprivacy_net docker network (synapse) can reach us by hostname.
+# Privoxy never has a host port published in docker-compose.yml, so
+# this is reachable only from inside the bridge network.  A defense in
+# depth follows — `permit-access pureprivacy_net` below limits which
+# source IPs we'll service even if the bind ever leaks outside the
+# bridge.
 listen-address 0.0.0.0:8118
 
 # Forward all .onion traffic through tor's SOCKS proxy.  Privoxy has a
