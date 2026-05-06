@@ -22,9 +22,10 @@ speaks MCP — can read and write your messages on your behalf.
   exposed to the public internet. Federation, if you turn it on, also rides Tor.
 - **Phone-ready**: scan a QR code from the setup wizard, install
   [Element](https://element.io/download) (the original — recommended for
-  v0.1) and [Orbot](https://orbot.app/), and you're chatting in under
-  five minutes.  Element X also works but its sliding-sync over Tor is
-  rougher in v0.1; see [docs/phone-setup.md](docs/phone-setup.md).
+  v0.1) and [Orbot](https://orbot.app/) (works on both Android and iOS),
+  and you're chatting in under five minutes.  Element X also works but
+  its sliding-sync over Tor is rougher in v0.1; see
+  [docs/phone-setup.md](docs/phone-setup.md).
 - **Agent-ready**: a built-in MCP server lets your local AI agent triage your
   inbox, draft replies, search history, and post messages — without any of it
   ever leaving your control.
@@ -130,7 +131,7 @@ stack back after reboot.
 
 See **[docs/phone-setup.md](docs/phone-setup.md)** for the full walkthrough.
 The short version: install Element (the original — recommended for v0.1),
-install Orbot (Android) or Onion Browser (iOS), scan the QR.
+install Orbot (Android **or iOS**), scan the QR.
 
 ## Connecting your agent
 

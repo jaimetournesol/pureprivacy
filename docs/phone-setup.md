@@ -20,8 +20,12 @@ country — and your phone gets there the same way regardless.
 
 - **A Tor proxy on the phone**.
   - Android: [Orbot](https://orbot.app/) (Google Play or F-Droid).
-  - iOS: [Onion Browser](https://onionbrowser.com/) — install Onion Browser
-    first; it ships an in-app Tor proxy that other apps can use via VPN.
+  - iOS: [Orbot for iOS](https://apps.apple.com/app/orbot/id1609461599)
+    (App Store).  Orbot installs a system-level VPN that routes selected
+    apps (or everything) through Tor.  This is the recommended path on
+    iOS as of v0.1.  [Onion Browser](https://onionbrowser.com/) still
+    works as an alternative and is documented further down for the
+    curious, but Orbot is simpler.
 - **The credentials from setup** — either the QR + text printed by
   `pureprivacy init`, or the wizard summary page at `http://127.0.0.1:8088`.
   Both contain the same information.
@@ -37,18 +41,23 @@ recovery key.
      Add **Element** to the list of "Tor-enabled apps."  Orbot will route
      Element's traffic through Tor while leaving the rest of your phone
      untouched.
-   - **iOS (Onion Browser):** open Onion Browser, tap *Settings →
-     Tor VPN → Start*.  This activates the system-level Tor VPN and routes
-     **all** apps through Tor for as long as the VPN is on.  You can leave
-     it on permanently, or toggle it just before opening Element.
+   - **iOS (Orbot):** open Orbot, tap *Start* — iOS will prompt you to
+     allow Orbot to add a VPN configuration; accept.  By default Orbot
+     routes **all** traffic through Tor.  If you'd rather scope it to
+     Element only, open *Settings → Per-App Routing* and add Element.
+     Either way, the system VPN icon in your status bar means Tor is
+     active.
+   - **iOS (Onion Browser, alternative):** open Onion Browser, tap
+     *Settings → Tor VPN → Start*.  Same VPN model as Orbot iOS — pick
+     whichever you have installed.
 
 2. **Verify Tor is working.** In a browser on your phone, open the box's
    `.onion` URL (you'll find it in the wizard's done screen, e.g.
    `http://abc...d.onion`).  You should see Synapse's HTML response:
    "It works! Synapse is running."  If you don't, your Tor proxy isn't
-   configured — on iOS, double-check that Onion Browser's *Tor VPN* is on
-   (Settings → VPN should show it active); on Android, that Element is in
-   Orbot's list of Tor-enabled apps.
+   configured — on iOS, check Settings → VPN to confirm Orbot (or Onion
+   Browser) is active; on Android, that Element is in Orbot's list of
+   Tor-enabled apps.
 
 3. **Open Element.** Tap *Sign in*, choose *Edit* next to the homeserver,
    and paste the `http://...onion` URL.  Tap *Continue*.
@@ -143,7 +152,7 @@ See [docs/voice.md](voice.md) for the full picture.
 
 | Symptom                                        | Likely cause                                                            |
 |------------------------------------------------|-------------------------------------------------------------------------|
-| "Cannot reach the server" in Element           | Tor proxy isn't routing Element.  Re-check Orbot (Android) or Onion Browser's Tor VPN (iOS — make sure the VPN is **on** in iOS Settings → VPN). |
+| "Cannot reach the server" in Element           | Tor proxy isn't routing Element.  Re-check Orbot (Android) or Orbot/Onion Browser's Tor VPN on iOS — make sure the VPN is **on** in iOS Settings → VPN. |
 | Element warns about HTTP (not HTTPS)           | Expected — `.onion` services don't have publicly-trusted certificates.  Accept and continue. |
 | Login spins forever                            | Synapse is still doing first-run migrations.  Check `pureprivacy status` or `pureprivacy verify`. |
 | Messages send but recipients don't see them    | Their device isn't verified — check the key-verification banner.        |
