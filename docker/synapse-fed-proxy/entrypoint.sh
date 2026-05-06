@@ -52,12 +52,32 @@ CERT_VALIDITY_DAYS=365
 CERT_RENEW_WITHIN_DAYS=30
 
 need_mint=false
-if [[ ! -f /etc/sidecar/cert.pem ]] || ! grep -q "${ONION}" /etc/sidecar/cert.pem 2>/dev/null; then
+if [[ ! -f /etc/sidecar/cert.pem ]]; then
     need_mint=true
-elif ! openssl x509 -checkend $((CERT_RENEW_WITHIN_DAYS * 24 * 3600)) \
-        -noout -in /etc/sidecar/cert.pem >/dev/null 2>&1; then
-    echo "synapse-fed-proxy: existing cert expires within ${CERT_RENEW_WITHIN_DAYS} days; rotating"
-    need_mint=true
+else
+    # Read the SAN list out of the cert and check that our onion is in
+    # it.  Earlier versions did `grep "${ONION}" cert.pem` over the PEM
+    # body, but a base64-armoured DER blob does NOT contain hostnames
+    # in plain text — that grep almost always missed and we re-minted
+    # on every container start.  If lk-jwt then didn't restart, it
+    # would keep trusting the old (rotated-away) cert and matrix://
+    # validation would break.
+    #
+    # `openssl x509 -ext subjectAltName` prints lines like:
+    #     X509v3 Subject Alternative Name:
+    #         DNS:abc123…onion, DNS:localhost
+    # Stash the output before grep -q so a SIGPIPE under set -euo
+    # pipefail doesn't kill the script (see SECURITY.md M1).
+    san="$(openssl x509 -in /etc/sidecar/cert.pem -noout \
+            -ext subjectAltName 2>/dev/null || true)"
+    if ! grep -qF "DNS:${ONION}" <<<"${san}"; then
+        echo "synapse-fed-proxy: existing cert SAN does not cover ${ONION}; rotating"
+        need_mint=true
+    elif ! openssl x509 -checkend $((CERT_RENEW_WITHIN_DAYS * 24 * 3600)) \
+            -noout -in /etc/sidecar/cert.pem >/dev/null 2>&1; then
+        echo "synapse-fed-proxy: existing cert expires within ${CERT_RENEW_WITHIN_DAYS} days; rotating"
+        need_mint=true
+    fi
 fi
 if "${need_mint}"; then
     echo "synapse-fed-proxy: minting self-signed Ed25519 cert for ${ONION}"

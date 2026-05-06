@@ -86,18 +86,32 @@ def _mint_setup_token_if_unset() -> None:
     log.warning("=" * 60)
 
 
-def _consume_setup_token(submitted: str) -> bool:
+def _verify_setup_token(submitted: str) -> bool:
+    """Constant-time check that ``submitted`` matches the on-disk token.
+
+    Pure read; never unlinks.  Use ``_invalidate_setup_token`` to consume
+    the token only after the rest of /setup has fully committed.
+    """
     if not submitted or not SETUP_TOKEN_PATH.is_file():
         return False
     expected = SETUP_TOKEN_PATH.read_text(encoding="utf-8").strip()
     import hmac as _hmac
-    if not _hmac.compare_digest(expected, submitted.strip()):
-        return False
+    return _hmac.compare_digest(expected, submitted.strip())
+
+
+def _invalidate_setup_token() -> None:
+    """Remove the one-time token from disk after a successful /setup.
+
+    Idempotent — already-missing is fine.  Any error is logged and
+    swallowed: setup *did* commit, so we'd rather leak a one-time
+    token than 500 the operator after the fact.
+    """
     try:
         SETUP_TOKEN_PATH.unlink()
     except FileNotFoundError:
         pass
-    return True
+    except OSError:
+        log.exception("could not remove setup token at %s", SETUP_TOKEN_PATH)
 
 
 @asynccontextmanager
@@ -216,7 +230,13 @@ async def do_setup(
     # `docker logs pureprivacy-wizard` (or via `pureprivacy info`) and
     # pastes it into the form. Refuses anyone who races the operator on
     # the loopback port.
-    if not _consume_setup_token(setup_token):
+    #
+    # We only *verify* here — the on-disk token is removed at the very
+    # end, after every Synapse registration has committed and the
+    # sentinel file has been written.  Earlier versions consumed the
+    # token before validating the form, so a typo or transient Synapse
+    # error would burn the one-time token and lock the operator out.
+    if not _verify_setup_token(setup_token):
         raise HTTPException(
             403,
             "Setup token missing or wrong. Run `pureprivacy info` (or "
@@ -286,6 +306,12 @@ async def do_setup(
         mcp_user=mcp_full_id,
         recovery_passphrase=recovery_key,
     )
+
+    # 6. Only NOW retire the one-time setup token.  Earlier failure
+    #    paths (typo, weak password, transient Synapse error) bail out
+    #    above with the token still on disk, so the operator can
+    #    correct and retry without minting a new one.
+    _invalidate_setup_token()
 
     log.info("setup complete: admin=%s mcp=%s", admin_full_id, mcp_full_id)
 

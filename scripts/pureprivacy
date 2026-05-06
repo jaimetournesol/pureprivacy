@@ -242,6 +242,23 @@ cmd_up() {
         # for an --voice run can't bleed through into a --no-voice run
         # via compose's env-passthrough.
         export VOICE_ENABLED=0
+        # Tear down any voice containers from a previous `up --voice`.
+        # Compose does NOT remove containers belonging to a profile that
+        # the current invocation didn't activate (--remove-orphans only
+        # touches services that are no longer in the file at all), so
+        # without this explicit step `pureprivacy up --no-voice`
+        # silently leaves livekit/lk-jwt/synapse-fed-proxy running.
+        # Stash docker ps output before grep -q: pipefail + SIGPIPE
+        # would otherwise turn grep's early exit into exit 141 on the
+        # outer script.
+        local _running_names
+        _running_names="$(docker ps --format '{{.Names}}')"
+        if grep -qE "^pureprivacy-(livekit|lk-jwt|synapse-fed-proxy)$" \
+                <<<"${_running_names}"; then
+            dim "  dropping voice services from previous run"
+            docker compose -p "${PROJECT}" --profile voice rm -sf \
+                livekit lk-jwt synapse-fed-proxy >/dev/null 2>&1 || true
+        fi
         bold "Bringing PurePrivacy up..."
     fi
     if [[ "${voice_explicit}" == "false" ]] && [[ "${voice}" == "true" ]]; then

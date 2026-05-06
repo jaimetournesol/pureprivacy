@@ -68,6 +68,36 @@ health + backup).
   corresponding `HiddenServicePort` lines added to torrc.  Added a
   comment in both files spelling out that the range must be
   hand-kept in sync (Tor cannot wildcard-map a range).
+  `docker/coturn/Dockerfile` `EXPOSE` updated to match (metadata
+  only; compose does not publish coturn to the host).
+- **Setup token consumed before validation.** `_consume_setup_token`
+  unlinked the on-disk token at the very start of `/setup`, before
+  the form was validated or any Synapse registration had committed.
+  A typo, weak password, or transient Synapse error would burn the
+  one-time token and lock the operator out until the wizard was
+  restarted.  Split into `_verify_setup_token` (read-only, called
+  first) and `_invalidate_setup_token` (called after every step has
+  succeeded — admin reg, MCP-bot reg, recovery key write,
+  `mark_setup_complete`).  Failures bail with the token still on
+  disk.
+- **synapse-fed-proxy re-minted the cert on every restart.** The
+  "do we already have a cert for this onion?" check was a literal
+  `grep "${ONION}" cert.pem` against the PEM file — a base64-armoured
+  DER blob doesn't contain hostnames in plain text, so the grep
+  almost always missed and the cert was rotated on every container
+  start.  If only the proxy restarted (operator action, healthcheck
+  flap), lk-jwt would keep the old fingerprint and matrix:// token
+  validation could break for a window.  Replaced with `openssl x509
+  -ext subjectAltName | grep -F "DNS:${ONION}"` so the check actually
+  reads the SAN list and only re-mints when the cert no longer covers
+  the current onion (or is within the renew-window).
+- **`pureprivacy up --no-voice` did not actually stop voice services.**
+  Compose's `--remove-orphans` only touches services that are no
+  longer in the file at all; voice-profile containers are still
+  declared, just under a profile the current `up` didn't activate, so
+  they kept running.  The CLI now explicitly `compose --profile
+  voice rm -sf` the three voice containers when transitioning out of
+  the voice profile.
 - **Coturn couldn't even `exec`.** The turnserver binary ships with
   `cap_net_bind_service=ep` as a file capability; with cap_drop:ALL
   the kernel refused `execve` because the file caps weren't in the
