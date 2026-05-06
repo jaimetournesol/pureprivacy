@@ -34,21 +34,33 @@ health + backup).
   `{"missing","loc":["query","request"]}` 422s.  Set an explicit
   `__signature__` on the dep so FastAPI sees a real `Request` type.
 - **`cap_drop: ALL` broke fresh-volume init for postgres / synapse /
-  tor / coturn.** The hardening pass dropped every capability from
-  every container, but those upstream images run their entrypoint as
-  root, chown/chmod the data dir, then `gosu`-drop to a service user
-  — which needs `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`,
-  `SETGID`.  Symptoms on a fresh volume: `Operation not permitted` on
-  `chmod /var/lib/postgresql/data`, `Permission denied` writing
-  `/data/homeserver.yaml`.  Added an `*init-caps` YAML anchor and
-  merged into all four services.
+  tor / coturn / synapse-fed-proxy / lk-jwt.** The hardening pass
+  dropped every capability from every container, but those upstream
+  images run their entrypoint as root, chown/chmod the data dir, then
+  `gosu`-drop to a service user — which needs `CHOWN`, `DAC_OVERRIDE`,
+  `FOWNER`, `SETUID`, `SETGID`.  Symptoms on a fresh volume:
+  `Operation not permitted` on `chmod /var/lib/postgresql/data`,
+  `Permission denied` writing `/data/homeserver.yaml`.  Added an
+  `*init-caps` YAML anchor and merged into all six services.
+- **synapse-fed-proxy (caddy) couldn't even `exec`.** Same
+  cap_net_bind_service=ep file-cap mechanism as coturn — caddy listens
+  on :443 and :8448 and the binary refuses to start unless the cap is
+  in the process bounding set.  Added `NET_BIND_SERVICE`.
+- **lk-jwt incompatible with `read_only: true`.** The entrypoint
+  appends `<onion> -> fed-proxy IP` to `/etc/hosts` and runs
+  `update-ca-certificates` to trust the fed-proxy CA.  Docker mounts
+  `/etc/hosts` read-only when the rootfs is read-only, which made the
+  entrypoint EROFS on every boot under the `--voice` profile.  Dropped
+  `read_only: true` from lk-jwt only; cap_drop:ALL + no-new-privileges
+  still apply.
 - **Coturn couldn't even `exec`.** The turnserver binary ships with
   `cap_net_bind_service=ep` as a file capability; with cap_drop:ALL
   the kernel refused `execve` because the file caps weren't in the
   process bounding set (`/usr/bin/turnserver: Operation not
   permitted`).  Added `NET_BIND_SERVICE` to coturn's `cap_add`.
   no-new-privileges still prevents the file caps from being applied,
-  so the running effective set stays small.
+  so the running effective set stays small.  Same fix for
+  synapse-fed-proxy (caddy).
 - **MCP container couldn't read its own secrets.** The hardening pass
   added `USER 10001` to `mcp-server/Dockerfile`, but `init` writes
   `/shared/secrets/*` mode 0600 root-owned.  UID 10001 then can't
