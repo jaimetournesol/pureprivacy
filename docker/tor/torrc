@@ -17,7 +17,13 @@ HiddenServicePort 8008 172.30.0.10:8008
 HiddenServicePort 8448 172.30.0.10:8008
 HiddenServicePort 3478 172.30.0.11:3478
 HiddenServicePort 5349 172.30.0.11:5349
-# Coturn TCP relay range — must match the range in coturn's turnserver.conf.
+# Coturn TCP relay range — every active TURN allocation pins one
+# port in here for ~15 min.  40 ports ≈ 40 concurrent calls; well
+# above what a small-group v0.1 appliance needs and with headroom for
+# slow GC of expired allocations.  THIS RANGE MUST EXACTLY MATCH
+# `min-port` / `max-port` in docker/coturn/turnserver.conf.tmpl —
+# Tor cannot wildcard-map a range.  If you change one file, change the
+# other.
 HiddenServicePort 49152 172.30.0.11:49152
 HiddenServicePort 49153 172.30.0.11:49153
 HiddenServicePort 49154 172.30.0.11:49154
@@ -28,10 +34,40 @@ HiddenServicePort 49158 172.30.0.11:49158
 HiddenServicePort 49159 172.30.0.11:49159
 HiddenServicePort 49160 172.30.0.11:49160
 HiddenServicePort 49161 172.30.0.11:49161
+HiddenServicePort 49162 172.30.0.11:49162
+HiddenServicePort 49163 172.30.0.11:49163
+HiddenServicePort 49164 172.30.0.11:49164
+HiddenServicePort 49165 172.30.0.11:49165
+HiddenServicePort 49166 172.30.0.11:49166
+HiddenServicePort 49167 172.30.0.11:49167
+HiddenServicePort 49168 172.30.0.11:49168
+HiddenServicePort 49169 172.30.0.11:49169
+HiddenServicePort 49170 172.30.0.11:49170
+HiddenServicePort 49171 172.30.0.11:49171
+HiddenServicePort 49172 172.30.0.11:49172
+HiddenServicePort 49173 172.30.0.11:49173
+HiddenServicePort 49174 172.30.0.11:49174
+HiddenServicePort 49175 172.30.0.11:49175
+HiddenServicePort 49176 172.30.0.11:49176
+HiddenServicePort 49177 172.30.0.11:49177
+HiddenServicePort 49178 172.30.0.11:49178
+HiddenServicePort 49179 172.30.0.11:49179
+HiddenServicePort 49180 172.30.0.11:49180
+HiddenServicePort 49181 172.30.0.11:49181
+HiddenServicePort 49182 172.30.0.11:49182
+HiddenServicePort 49183 172.30.0.11:49183
+HiddenServicePort 49184 172.30.0.11:49184
+HiddenServicePort 49185 172.30.0.11:49185
+HiddenServicePort 49186 172.30.0.11:49186
+HiddenServicePort 49187 172.30.0.11:49187
+HiddenServicePort 49188 172.30.0.11:49188
+HiddenServicePort 49189 172.30.0.11:49189
+HiddenServicePort 49190 172.30.0.11:49190
+HiddenServicePort 49191 172.30.0.11:49191
 # MatrixRTC (only useful when the `voice` profile is active; harmless otherwise).
 HiddenServicePort 7880  172.30.0.12:7880
 HiddenServicePort 7881  172.30.0.12:7881
-HiddenServicePort 8082  lk-jwt:8080
+HiddenServicePort 8082  172.30.0.14:8080
 
 Log notice stdout
 SafeLogging 1

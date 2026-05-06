@@ -53,6 +53,21 @@ health + backup).
   entrypoint EROFS on every boot under the `--voice` profile.  Dropped
   `read_only: true` from lk-jwt only; cap_drop:ALL + no-new-privileges
   still apply.
+- **Tor refused `HiddenServicePort 8082 lk-jwt:8080`.** Modern Tor
+  (alpine:3.20 ships 0.4.9.6) rejects hostname targets in
+  HiddenServicePort with "Unparseable address; Failed to parse/
+  validate config" — earlier Tor was lenient.  The line had been in
+  the repo since the initial release; the running container only
+  worked because its image predated the alpine package upgrade.
+  Pinned lk-jwt at `172.30.0.14` and updated torrc to use the IP.
+- **Coturn relay range bumped from 10 to 40 ports.** The old
+  `min-port=49152..max-port=49161` capped the box at ~10 concurrent
+  TURN allocations; each allocation pins a port for ~15 minutes by
+  default and stuck/leaked allocations could block call setup for a
+  small group.  Bumped to 49152..49191 (40 ports), with
+  corresponding `HiddenServicePort` lines added to torrc.  Added a
+  comment in both files spelling out that the range must be
+  hand-kept in sync (Tor cannot wildcard-map a range).
 - **Coturn couldn't even `exec`.** The turnserver binary ships with
   `cap_net_bind_service=ep` as a file capability; with cap_drop:ALL
   the kernel refused `execve` because the file caps weren't in the

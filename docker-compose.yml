@@ -322,7 +322,11 @@ services:
     volumes:
       - shared:/shared:ro
     networks:
-      - pureprivacy_net
+      pureprivacy_net:
+        # Fixed IP so torrc can map HiddenServicePort 8082 to a real
+        # address — modern Tor (alpine 3.20+) refuses hostname targets
+        # in HiddenServicePort with "Unparseable address".
+        ipv4_address: 172.30.0.14
     healthcheck:
       # lk-jwt-service binds 8080 by default and has no /healthz; check that
       # the port is open instead.

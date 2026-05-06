@@ -4,9 +4,18 @@
 listening-port=3478
 tls-listening-port=5349
 
-# Relay range.  Must match the HiddenServicePort entries in tor's torrc.
+# Relay range.  Each active TURN allocation pins one port from this
+# range for ~15 minutes (default lifetime), so 40 ports ≈ 40 concurrent
+# 1:1 calls — well above what a small-group appliance needs in
+# practice and with enough headroom that leaked / not-yet-GC'd
+# allocations don't block call setup.
+#
+# THIS RANGE MUST EXACTLY MATCH the HiddenServicePort entries in
+# docker/tor/torrc.  Tor cannot wildcard-map a port range, so every
+# port in here also needs an explicit line over there.  If you change
+# the range, change both files together.
 min-port=49152
-max-port=49161
+max-port=49191
 
 # We don't have a real public IP — coturn's external-ip is the .onion
 # hostname so client SDP advertises the right address.
