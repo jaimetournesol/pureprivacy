@@ -35,6 +35,13 @@ appliance promise (one-command install, easy to use, survives reboots) is high.
 4. Run `./scripts/test-all.sh` and capture the output.
 5. Open a PR against `main`. Reference any related issue.
 
+> **First-clone gotcha.**  Some review tools (e.g. Claude Code's
+> `/security-review`, certain CI scripts) run `git diff origin/HEAD...`
+> which bails out with `ambiguous argument 'origin/HEAD...'` if your
+> clone didn't pick up the remote's default branch.  `./scripts/test-all.sh`
+> auto-fixes this by running `git remote set-head origin --auto` once;
+> if you'd rather do it explicitly, that's the one-liner.
+
 ## Code style
 
 - Python: `ruff format` and `ruff check`. We're not picky beyond that.

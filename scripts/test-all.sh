@@ -17,6 +17,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+# Best-effort: make sure `origin/HEAD` resolves so contributor tools that
+# diff against it (Claude Code's /security-review, GitHub Actions
+# `git diff origin/HEAD...`, etc.) don't bail out with
+# "ambiguous argument 'origin/HEAD...'".  This happens on freshly-
+# cloned repos where the remote's default branch wasn't advertised at
+# clone time.  Idempotent and harmless when origin/HEAD is already set
+# — the redirect swallows the no-op output.
+if [[ -d .git ]] && git remote get-url origin >/dev/null 2>&1; then
+    git remote set-head origin --auto >/dev/null 2>&1 || true
+fi
+
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
