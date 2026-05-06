@@ -20,6 +20,7 @@ homeservers will be in each other's federation allowlist.</p>
     </p>
     <form method="post" action="/pair/regenerate" style="margin:0;"
           data-confirm="Generate a new code?  The current one will stop working immediately, even if your peer hasn't used it yet.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="ghost small">Regenerate code</button>
     </form>
   </div>
@@ -33,6 +34,7 @@ homeservers will be in each other's federation allowlist.</p>
 <h2>Accept a peer's code</h2>
 <form method="post" action="/pair/accept"
       onsubmit="const b = this.querySelector('button'); b.textContent = 'Pairing & restarting Synapse…'; setTimeout(() => { b.disabled = true; }, 0);">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label for="pair_code">Paste their code here</label>
   <textarea id="pair_code" name="pair_code" rows="4"
             style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-family:ui-monospace,monospace;"
@@ -51,6 +53,7 @@ homeservers will be in each other's federation allowlist.</p>
     <form method="post" action="/pair/remove" style="margin:0;"
           data-confirm="Unpair {{ p.onion }}?  Synapse will restart and rooms federated with this peer will stop working."
           onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Restarting Synapse…';">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="onion" value="{{ p.onion }}">
       <button type="submit" class="danger small">Remove</button>
     </form>

@@ -191,6 +191,7 @@
         <a href="/pair" {% if active == "pair" %}class="active"{% endif %}>Federation</a>
       </div>
       <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">Log out</button>
       </form>
     </div>

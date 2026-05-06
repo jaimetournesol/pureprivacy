@@ -6,6 +6,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+Hardening pass before tagging v0.1.0. Findings IDs reference the
+internal v0.1 audit (see `SECURITY.md`).
+
+- **C1**: MCP `upload_file` / `download_file` now jail every path to
+  `/data/uploads`. Absolute paths, `..` traversal, and symlinked
+  components are refused. The bot ingests prompts from Matrix rooms;
+  without this jail an LLM-driven payload could exfiltrate
+  `/shared/secrets/*` or overwrite arbitrary container files.
+- **C2**: MCP bot only auto-joins room invites from users on the local
+  homeserver, plus an explicit `MCP_INVITE_ALLOWLIST` if set.
+  Federated peers can no longer drag the bot into rooms.
+- **H2**: Every container now runs with `cap_drop: [ALL]` and
+  `no-new-privileges`. Wizard, MCP, and lk-jwt are `read_only` with a
+  tmpfs at `/tmp`. MCP additionally runs as UID 10001.
+- **H3**: Wizard session cookie is now `SameSite=Strict`. Every
+  state-changing form carries an HMAC-signed CSRF token; routes also
+  validate that `Origin` (or `Referer`) matches the wizard's host. The
+  CLI-token bypass is preserved for `scripts/pureprivacy`.
+- **H4**: New `pureprivacy admin rotate-cli-token` and
+  `pureprivacy admin rotate-admin-token` commands. CSRF and CLI-token
+  validators now refuse tokens shorter than 32 chars.
+- **H5**: First-boot `/setup` requires a one-time setup token planted
+  at startup. `pureprivacy info` (and `docker logs pureprivacy-wizard`)
+  surface it. The token is consumed on first use.
+- **H6**: MCP `send_message` no longer accepts a `formatted` HTML
+  parameter — it would have let an LLM-controlled payload inject
+  unsanitized markup into other clients.
+- **M1**: Fixed `set -euo pipefail` + `grep -q` SIGPIPE bug in
+  `scripts/pureprivacy` (postgres backup detection and other call
+  sites).
+- **M3**: `synapse-fed-proxy` cert validity dropped from 100 years to
+  1 year, with auto-rotation when within 30 days of expiry. Switched
+  RSA-2048 → Ed25519. Key file is `chmod 0600`.
+- **M5/M12**: Wizard `/login` rate-limited to 5 attempts/minute per
+  IP. Constant 0.5 s delay on every response so timing does not leak
+  hit vs miss.
+- **M6**: Removed comment in `docker/privoxy/config` that explained
+  how to bypass Tor for federation — that path deanonymizes the
+  operator and must not be a documented option.
+- **M9**: All GitHub Actions pinned to commit SHAs (with `# vN`
+  comments for readability) instead of floating tags.
+- **M11**: SECURITY.md now documents the
+  `ignore_unverified_devices=True` E2EE caveat.
+- **L4**: LiveKit `enable_loopback_candidate` set to `false` —
+  loopback ICE candidates were noise and information disclosure.
+- **L7**: Username validation in `/setup` and `/people/add` now
+  requires `.isascii()` so unicode-aware `.isalnum()` does not let
+  through characters Synapse may normalize unpredictably.
+
 ### Added (UX, this pass)
 - `scripts/install.sh` — symlinks `pureprivacy` into `~/.local/bin` (or
   `/usr/local/bin` with `--system`) so docs and the wizard's hints can

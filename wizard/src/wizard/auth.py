@@ -110,7 +110,11 @@ def set_session_cookie(response: Response, value: str) -> None:
         value,
         max_age=SESSION_LIFETIME_SECONDS,
         httponly=True,
-        samesite="lax",
+        # Strict (not Lax) so the cookie is never sent on top-level
+        # cross-site navigations either; combined with the CSRF token and
+        # Origin/Referer check this gives belt-and-braces CSRF protection
+        # for the loopback HTTP wizard.
+        samesite="strict",
         secure=False,  # loopback HTTP; HMAC-signed and short-lived
         path="/",
     )
@@ -157,10 +161,15 @@ def load_or_create_cli_token(shared: Path) -> str:
     return token
 
 
+_MIN_CLI_TOKEN_LEN = 32  # token_hex(32) → 64 chars; refuse anything shorter
+
+
 def cli_token_matches(shared: Path, presented: Optional[str]) -> bool:
-    if not presented:
+    if not presented or len(presented) < _MIN_CLI_TOKEN_LEN:
         return False
     expected = load_or_create_cli_token(shared)
+    if len(expected) < _MIN_CLI_TOKEN_LEN:
+        return False
     return hmac.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
 
 

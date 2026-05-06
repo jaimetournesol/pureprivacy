@@ -44,7 +44,7 @@ def build_app() -> tuple[Starlette, dict, Config]:
     state: dict = {"bot": None}
 
     mcp = FastMCP(name="pureprivacy")
-    register_tools(mcp, lambda: state["bot"])
+    register_tools(mcp, lambda: state["bot"], cfg)
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:
@@ -127,7 +127,11 @@ async def run() -> None:
                 await asyncio.sleep(5)
                 continue
             try:
-                bot = MatrixBot(fresh.credentials, fresh.data_dir)
+                bot = MatrixBot(
+                    fresh.credentials,
+                    fresh.data_dir,
+                    invite_allowlist=fresh.invite_allowlist,
+                )
                 await bot.start()
                 state["bot"] = bot
                 log.info("matrix bot online")

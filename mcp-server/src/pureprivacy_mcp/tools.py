@@ -7,18 +7,23 @@ they assume the human operator has explicitly added the bot to the room.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fastmcp import FastMCP
 from nio import UploadResponse
 
+from .config import Config
 from .matrix_bot import MatrixBot
+from .path_jail import MEDIA_ID_RE, SERVER_NAME_RE, jail_path
 
 log = logging.getLogger("pureprivacy.tools")
 
 
-def register_tools(mcp: FastMCP, get_bot: Callable[[], Optional[MatrixBot]]) -> None:
+def register_tools(
+    mcp: FastMCP,
+    get_bot: Callable[[], Optional[MatrixBot]],
+    cfg: Config,
+) -> None:
     """Bind every tool to a function that resolves to the current bot.
 
     The bot is initialized lazily — at boot, before the wizard has run, it
@@ -121,14 +126,16 @@ def register_tools(mcp: FastMCP, get_bot: Callable[[], Optional[MatrixBot]]) -> 
         return {"query": query, "hits": hits}
 
     @mcp.tool()
-    async def send_message(
-        room_id: str, body: str, formatted: Optional[str] = None
-    ) -> dict[str, Any]:
+    async def send_message(room_id: str, body: str) -> dict[str, Any]:
         """Post a plain-text message to a room.
 
         If the room is end-to-end encrypted, matrix-nio handles encryption
         provided the bot has received the relevant Megolm keys.  See the
         device-verification note in the README.
+
+        Only plain text is supported in v0.1: HTML formatting was removed
+        because it provided a path for an LLM-driven payload to inject
+        unsanitized markup into other clients.
         """
         bot = _require_ready()
         room = bot.room(room_id)
@@ -136,9 +143,6 @@ def register_tools(mcp: FastMCP, get_bot: Callable[[], Optional[MatrixBot]]) -> 
             "msgtype": "m.text",
             "body": body,
         }
-        if formatted is not None:
-            content["format"] = "org.matrix.custom.html"
-            content["formatted_body"] = formatted
         resp = await bot.client.room_send(
             room.room_id,
             message_type="m.room.message",
@@ -184,18 +188,18 @@ def register_tools(mcp: FastMCP, get_bot: Callable[[], Optional[MatrixBot]]) -> 
         path: str,
         body: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Upload a local file to the room as an `m.file` event.
+        """Upload a file from the uploads jail to the room as an `m.file`.
 
-        `path` must be an absolute path inside the MCP container.  The
-        easiest way to share files is to mount your host directory into
-        `/data/uploads` in `docker-compose.override.yml` and reference paths
-        below that mount.
+        `path` is interpreted relative to the MCP uploads directory
+        (default `/data/uploads`).  Mount your host directory there in
+        `docker-compose.override.yml` to make files available to the bot.
+        Absolute paths or `..` traversal that escapes the jail are refused.
         """
         bot = _require_ready()
         room = bot.room(room_id)
-        upload_path = Path(path)
-        if not upload_path.is_absolute() or not upload_path.is_file():
-            raise ValueError(f"upload_file requires an absolute file path, got {path!r}")
+        upload_path = jail_path(cfg.uploads_dir, path)
+        if not upload_path.is_file():
+            raise ValueError(f"upload_file: not a regular file: {path!r}")
 
         with open(upload_path, "rb") as fh:
             resp, _ = await bot.client.upload(
@@ -223,19 +227,32 @@ def register_tools(mcp: FastMCP, get_bot: Callable[[], Optional[MatrixBot]]) -> 
 
     @mcp.tool()
     async def download_file(mxc: str, target_path: str) -> dict[str, Any]:
-        """Download an `mxc://` URI to an absolute path inside the MCP container."""
+        """Download an `mxc://` URI into the MCP uploads jail.
+
+        `target_path` is interpreted relative to `/data/uploads` and must
+        not escape it; symlinked components are refused.
+        """
         bot = _require_ready()
         if not mxc.startswith("mxc://"):
             raise ValueError("mxc must start with mxc://")
-        target = Path(target_path)
-        if not target.is_absolute():
-            raise ValueError("target_path must be absolute")
-        target.parent.mkdir(parents=True, exist_ok=True)
         rest = mxc[len("mxc://") :]
+        if "/" not in rest:
+            raise ValueError("malformed mxc URI: missing media_id")
         server, media_id = rest.split("/", 1)
+        if not SERVER_NAME_RE.match(server):
+            raise ValueError(f"refusing mxc server name: {server!r}")
+        if not MEDIA_ID_RE.match(media_id):
+            raise ValueError(f"refusing mxc media_id: {media_id!r}")
+
+        target = jail_path(cfg.uploads_dir, target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
         resp = await bot.client.download(server_name=server, media_id=media_id)
         body = getattr(resp, "body", None)
         if body is None:
             raise RuntimeError(f"download failed: {resp}")
+        # Refuse to overwrite an existing symlink (the jail check looked at
+        # parents; the leaf could still be a symlink the operator placed).
+        if target.is_symlink():
+            raise ValueError(f"refusing to overwrite symlink: {target}")
         target.write_bytes(body)
         return {"path": str(target), "bytes": len(body)}

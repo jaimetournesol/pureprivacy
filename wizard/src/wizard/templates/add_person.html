@@ -14,6 +14,7 @@ hand to them — that's how they sign in from their phone.</p>
 {% endif %}
 
 <form method="post" action="/people/add" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label for="username">Username</label>
   <input type="text" id="username" name="username" required
          pattern="[a-z0-9_-]+" placeholder="e.g. alice">

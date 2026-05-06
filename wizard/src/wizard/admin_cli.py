@@ -462,6 +462,42 @@ async def cmd_pair_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_rotate_cli_token(_args: argparse.Namespace) -> int:
+    """Mint a fresh CLI token and overwrite the on-disk one.
+
+    Anything currently using the previous CLI token (long-running test
+    harnesses, scripts the operator forgot about) starts getting 401s
+    immediately.  No grace window: a token rotation is operator-initiated
+    and intentional.
+    """
+    import secrets as stdlib_secrets
+
+    p = SHARED_DIR / "secrets" / "cli_token"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    new_token = stdlib_secrets.token_hex(32)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(new_token + "\n", encoding="utf-8")
+    tmp.chmod(0o600)
+    tmp.replace(p)
+    # Caller usually pipes us into another process; print only the token
+    # so the bash wrapper can show or re-export it without parsing JSON.
+    print(json.dumps({"rotated": True}, indent=2))
+    return 0
+
+
+async def cmd_rotate_admin_token(_args: argparse.Namespace) -> int:
+    """Discard the cached admin access token.
+
+    The next admin operation logs in fresh and re-caches.  Use this if
+    the cached token might be exposed (e.g. someone else had shell on
+    this box).  It does not affect the operator's *password* — only the
+    long-lived bearer token kept at /shared/secrets/admin_access_token.
+    """
+    _invalidate_cached_admin_token()
+    print(json.dumps({"invalidated": True}, indent=2))
+    return 0
+
+
 # ---- argparse plumbing -----------------------------------------------------
 
 
@@ -505,6 +541,12 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("pair-remove")
     a.add_argument("onion")
     a.set_defaults(handler=cmd_pair_remove)
+
+    a = sub.add_parser("rotate-cli-token")
+    a.set_defaults(handler=cmd_rotate_cli_token)
+
+    a = sub.add_parser("rotate-admin-token")
+    a.set_defaults(handler=cmd_rotate_admin_token)
 
     return p
 

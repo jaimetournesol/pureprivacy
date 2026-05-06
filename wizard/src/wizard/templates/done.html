@@ -107,12 +107,14 @@ inside Element.</p>
 </div>
 <form method="post" action="/revoke-prev-token"
       data-confirm="Revoke the previous token immediately?  Any agent still using it will start getting 403s on its next request.">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <button type="submit" class="danger">Revoke previous token now</button>
 </form>
 {% endif %}
 
 <form method="post" action="/rotate-token"
       data-confirm="Rotate the MCP token?  The new token is shown immediately; the old token keeps working for 10 minutes so your agents can migrate.">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <button type="submit" class="danger">Rotate MCP token</button>
 </form>
 <p class="muted">Rotation gives you a 10-minute grace window: the old token

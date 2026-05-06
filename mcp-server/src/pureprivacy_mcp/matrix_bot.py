@@ -25,18 +25,36 @@ from nio import (
 
 from .config import BotCredentials
 
+
+def _server_name(user_id: str) -> str:
+    """Extract the homeserver part of a Matrix user ID (`@x:server`)."""
+    if ":" not in user_id:
+        return ""
+    return user_id.split(":", 1)[1]
+
 log = logging.getLogger("pureprivacy.bot")
 
 
 class MatrixBot:
     """Wraps an `nio.AsyncClient` with login/persistence helpers."""
 
-    def __init__(self, credentials: BotCredentials, data_dir: Path) -> None:
+    def __init__(
+        self,
+        credentials: BotCredentials,
+        data_dir: Path,
+        invite_allowlist: frozenset[str] = frozenset(),
+    ) -> None:
         self.credentials = credentials
         self.data_dir = data_dir
         self.store_dir = data_dir / "store"
         self.session_path = data_dir / "session.json"
         self.store_dir.mkdir(parents=True, exist_ok=True)
+        # Inviter user IDs we will auto-join. Same-homeserver inviters are
+        # always allowed (registration is closed, so their existence is
+        # already vetted by the operator). Federated inviters must be
+        # listed explicitly via MCP_INVITE_ALLOWLIST.
+        self._own_server = _server_name(credentials.user_id)
+        self._invite_allowlist = invite_allowlist
 
         config = AsyncClientConfig(
             store_sync_tokens=True,
@@ -95,16 +113,31 @@ class MatrixBot:
         if self.client.should_upload_keys:
             await self.client.keys_upload()
 
-        # Auto-accept any room invitation addressed to the bot.  The human
-        # operator is expected to invite the bot themselves; an attacker on
-        # the same homeserver could spam invites, but they'd also need to
-        # be on the homeserver in the first place (registration is closed).
+        # Auto-accept room invitations only from inviters on our own
+        # homeserver (registration is closed, so those are operator-vetted)
+        # or from explicitly allowlisted federated user IDs. Without this
+        # gate any user a federated peer happens to know about could drag
+        # the bot into a room and address its MCP tools.
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
         self._sync_task = asyncio.create_task(self._sync_forever())
 
+    def _invite_is_allowed(self, sender: str) -> bool:
+        if not sender or not sender.startswith("@") or ":" not in sender:
+            return False
+        if self._own_server and _server_name(sender) == self._own_server:
+            return True
+        return sender in self._invite_allowlist
+
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
         if event.state_key != self.client.user_id:
+            return
+        if not self._invite_is_allowed(event.sender):
+            log.warning(
+                "ignoring invite to %s from %s (not on own server, not allowlisted)",
+                room.room_id,
+                event.sender,
+            )
             return
         log.info("auto-joining %s (invited by %s)", room.room_id, event.sender)
         for attempt in range(3):

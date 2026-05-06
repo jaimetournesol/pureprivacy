@@ -17,10 +17,21 @@ name: pureprivacy
 x-restart: &default-restart
   restart: unless-stopped
 
+# Drop every Linux capability and forbid privilege escalation by default.
+# Services that genuinely need a capability re-add it explicitly.  This
+# moves us from the Docker default (≈14 capabilities) to the principle
+# of least privilege baseline.
+x-hardening: &default-hardening
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 services:
   # One-shot: generates secrets into the shared volume on first boot.
   # Idempotent: subsequent runs are no-ops if the secret files already exist.
   init:
+    <<: *default-hardening
     container_name: pureprivacy-init
     build:
       context: ./docker/init
@@ -32,7 +43,7 @@ services:
       - pureprivacy_net
 
   tor:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-tor
     build:
       context: ./docker/tor
@@ -53,7 +64,7 @@ services:
       start_period: 60s
 
   privoxy:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-privoxy
     build:
       context: ./docker/privoxy
@@ -71,7 +82,7 @@ services:
       start_period: 5s
 
   postgres:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-postgres
     image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
     depends_on:
@@ -97,7 +108,7 @@ services:
       start_period: 10s
 
   synapse:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-synapse
     build:
       context: ./docker/synapse
@@ -130,7 +141,7 @@ services:
       start_period: 180s
 
   coturn:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-coturn
     build:
       context: ./docker/coturn
@@ -151,8 +162,11 @@ services:
       start_period: 60s
 
   wizard:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-wizard
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: ./wizard
     image: pureprivacy/wizard:0.1.0
@@ -188,7 +202,7 @@ services:
       start_period: 5s
 
   livekit:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-livekit
     profiles: ["voice"]
     build:
@@ -210,7 +224,7 @@ services:
       start_period: 15s
 
   synapse-fed-proxy:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-synapse-fed-proxy
     profiles: ["voice"]
     build:
@@ -234,8 +248,11 @@ services:
       start_period: 30s
 
   lk-jwt:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-lk-jwt
+    read_only: true
+    tmpfs:
+      - /tmp
     profiles: ["voice"]
     build:
       context: ./docker/lk-jwt
@@ -270,8 +287,11 @@ services:
       start_period: 10s
 
   mcp:
-    <<: *default-restart
+    <<: [*default-restart, *default-hardening]
     container_name: pureprivacy-mcp
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: ./mcp-server
     image: pureprivacy/mcp:0.1.0

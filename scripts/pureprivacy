@@ -396,6 +396,15 @@ cmd_info() {
     else
         bold "PurePrivacy is up.  Finish setup at:"
         echo "  http://127.0.0.1:8088"
+        local setup_token
+        setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
+            | tr -d '[:space:]' || true)"
+        if [[ -n "${setup_token}" ]]; then
+            echo
+            bold "One-time setup token:"
+            echo "  ${setup_token}"
+            dim  "Paste it into the setup form to claim admin.  This token disappears after first setup."
+        fi
         echo
         dim "Onion is already provisioned: http://${onion}"
     fi
@@ -881,11 +890,23 @@ PY
     fi
 
     bold "Creating admin user @${admin_user}:${onion}..."
+    # /setup is gated by a one-time token the wizard plants at startup.
+    # We read it through docker exec — the operator can't paste it via
+    # the CLI flow, but they're authenticated through the host shell.
+    local setup_token
+    setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
+        | tr -d '[:space:]' || true)"
+    if [[ -z "${setup_token}" ]]; then
+        red "Setup token not found at /shared/secrets/setup_token."
+        red "Either setup is already complete or the wizard hasn't started."
+        exit 1
+    fi
     local body_path
     body_path="$(mktemp)"
     local code
     code="$(curl -s -o "${body_path}" -w '%{http_code}' \
         -X POST http://127.0.0.1:8088/setup \
+        --data-urlencode "setup_token=${setup_token}" \
         --data-urlencode "admin_username=${admin_user}" \
         --data-urlencode "admin_password=${admin_password}")"
     if [[ "${code}" != "303" ]] && [[ "${code}" != "200" ]]; then
@@ -979,7 +1000,7 @@ cmd_verify() {
 
     check "docker daemon" docker info
     check "compose project up" \
-        bash -c "docker compose -p '${PROJECT}' ps -q | grep -q ."
+        bash -c "out=\"\$(docker compose -p '${PROJECT}' ps -q)\"; [[ -n \"\${out}\" ]]"
     check "tor container running" \
         bash -c "[[ \$(container_running tor) == 'true' ]]"
     check "tor onion published" \
@@ -1104,7 +1125,11 @@ cmd_backup() {
     # could capture a half-written postgres page; stopping is the simple
     # correct answer at v0.1.x scale.
     local was_running="false"
-    if docker ps --format '{{.Names}}' | grep -q "^pureprivacy-postgres$"; then
+    # Stash the listing first: `docker ps | grep -q` plus `set -euo pipefail`
+    # turns SIGPIPE on grep's early exit into a script-killing exit 141.
+    local _running_names
+    _running_names="$(docker ps --format '{{.Names}}')"
+    if grep -q "^pureprivacy-postgres$" <<<"${_running_names}"; then
         was_running="true"
         cmd_stop
     fi
@@ -1174,7 +1199,9 @@ cmd_restore() {
     # by file extension or magic bytes, then decrypt to a tmp tarball.
     local actual_src="${src}"
     local tmp_decrypted=""
-    if [[ "${src}" == *.enc ]] || head -c 8 "${src}" 2>/dev/null | grep -q "Salted__"; then
+    local _magic
+    _magic="$(head -c 8 "${src}" 2>/dev/null || true)"
+    if [[ "${src}" == *.enc ]] || grep -q "Salted__" <<<"${_magic}"; then
         if ! command -v openssl >/dev/null 2>&1; then
             red "Backup looks encrypted but openssl is not installed."
             exit 1
@@ -1246,6 +1273,26 @@ cmd_admin() {
     require_setup
     local sub="${1:-}"; shift || true
     case "${sub}" in
+        rotate-cli-token)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy admin rotate-cli-token"
+                echo "  Mint a fresh CLI token; the previous one stops working immediately."
+                echo "  Use this if /shared/secrets/cli_token may have been exposed."
+                return 0 ;;
+            esac
+            admin_cli rotate-cli-token >/dev/null
+            green "Rotated CLI token; anything still using the previous token will start getting 401s."
+            ;;
+        rotate-admin-token)
+            case "${1:-}" in -h|--help|help)
+                echo "pureprivacy admin rotate-admin-token"
+                echo "  Discard the cached Synapse admin access token; the next"
+                echo "  admin op re-logs in.  Use after suspected token exposure."
+                return 0 ;;
+            esac
+            admin_cli rotate-admin-token >/dev/null
+            green "Discarded cached admin access token; next admin operation will re-login."
+            ;;
         reset-password)
             case "${1:-}" in -h|--help|help)
                 echo "pureprivacy admin reset-password [PASSPHRASE] [--new-password PW]"
@@ -1286,6 +1333,8 @@ cmd_admin() {
         ""|help|-h|--help)
             cat <<'EOF'
 pureprivacy admin reset-password PASSPHRASE [--new-password PW]
+pureprivacy admin rotate-cli-token
+pureprivacy admin rotate-admin-token
 EOF
             ;;
         *)

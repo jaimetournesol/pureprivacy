@@ -12,9 +12,10 @@ listen-address 0.0.0.0:8118
 # special-case for `.onion` to avoid leaking via clearnet DNS.
 forward-socks5t .onion tor:9050 .
 
-# All other traffic also goes through tor, in case anyone configures a
-# clearnet peer for federation later.  Comment this line out if you want
-# clearnet federation to bypass tor.
+# All other traffic also goes through tor — this is non-negotiable for
+# PurePrivacy.  PurePrivacy is a Tor-only appliance: routing federation
+# (or anything else) over clearnet would deanonymize the operator and
+# break the threat model the rest of the stack assumes.  Do not change.
 forward-socks5t / tor:9050 .
 
 # Defensive defaults.

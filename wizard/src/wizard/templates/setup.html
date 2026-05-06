@@ -5,10 +5,21 @@
 the credentials you'll log in with from your phone — and to manage this box.</p>
 
 <form method="post" action="/setup" autocomplete="off">
+  <label for="setup_token">One-time setup token</label>
+  <input type="text" id="setup_token" name="setup_token" required
+         autocomplete="off" spellcheck="false"
+         pattern="[A-Fa-f0-9]+" placeholder="paste token here">
+  <p class="muted">
+    Find this token in <code>docker logs pureprivacy-wizard</code> (or
+    run <code>pureprivacy info</code> on the host).  It proves you are
+    the operator of this box and not a stray local browser tab.  This
+    field disappears after a successful first setup.
+  </p>
+
   <label for="username">Username</label>
   <input type="text" id="username" name="admin_username" required
          value="admin" pattern="[a-z0-9_-]+">
-  <p class="muted">Lowercase letters, digits, dash, underscore.</p>
+  <p class="muted">Lowercase letters, digits, dash, underscore (ASCII only).</p>
 
   <label for="password">Password
     <span style="float:right;font-size:12px;">

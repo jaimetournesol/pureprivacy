@@ -29,6 +29,7 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 
 from . import admin_cli
 from . import auth
+from . import csrf
 from . import pairing as pair
 from . import recovery
 from .docker_client import DockerUnavailable, default_client as docker_default_client
@@ -52,19 +53,75 @@ env = Environment(
 )
 
 
+SETUP_TOKEN_PATH = SHARED_DIR / "secrets" / "setup_token"
+
+
+def _mint_setup_token_if_unset() -> None:
+    """Plant a one-time setup token before /setup is reachable.
+
+    Without this, anything that can hit ``127.0.0.1:8088`` before the
+    operator does (a stray browser tab, a misbehaving local service, a
+    container that can reach the host) can race the operator and seize
+    admin. With it, ``/setup`` requires a token that only the operator
+    can read out-of-band — by running ``pureprivacy info`` on the host or
+    by inspecting ``docker logs pureprivacy-wizard``.
+    """
+    if (SHARED_DIR / ".setup-complete").is_file():
+        return
+    SETUP_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if SETUP_TOKEN_PATH.is_file() and SETUP_TOKEN_PATH.stat().st_size > 0:
+        token = SETUP_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    else:
+        token = stdlib_secrets.token_hex(16)
+        tmp = SETUP_TOKEN_PATH.with_suffix(".tmp")
+        tmp.write_text(token + "\n", encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.replace(SETUP_TOKEN_PATH)
+    # Print loud and clear: the operator needs to find this in `docker
+    # logs pureprivacy-wizard` (or `pureprivacy info`) and paste it into
+    # the setup form. This is the trade-off for refusing anonymous setup.
+    log.warning("=" * 60)
+    log.warning("PUREPRIVACY SETUP TOKEN: %s", token)
+    log.warning("Paste it on the first-boot setup page to claim admin.")
+    log.warning("=" * 60)
+
+
+def _consume_setup_token(submitted: str) -> bool:
+    if not submitted or not SETUP_TOKEN_PATH.is_file():
+        return False
+    expected = SETUP_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    import hmac as _hmac
+    if not _hmac.compare_digest(expected, submitted.strip()):
+        return False
+    try:
+        SETUP_TOKEN_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    return True
+
+
 @asynccontextmanager
-async def _lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI passes app
+async def _lifespan(app: FastAPI):
     # Mint the CLI-token file at startup so scripts can read it as soon as
     # the wizard is healthy.  Lazy generation on first request would race
     # the CLI's first call.
     auth.load_or_create_cli_token(SHARED_DIR)
+    _mint_setup_token_if_unset()
     yield
 
 
 app = FastAPI(title="PurePrivacy setup wizard", lifespan=_lifespan)
+# Build the CSRF Depends() once, bound to this wizard's SHARED_DIR. The
+# module avoids importing FastAPI itself so it stays unit-testable
+# without that dependency installed.
+_csrf_protect = csrf.make_csrf_protect(SHARED_DIR)
 
 
 def _render(template: str, **ctx: Any) -> HTMLResponse:
+    # Every render carries a fresh CSRF token; templates that submit forms
+    # embed it as a hidden field. Tokens are cheap (HMAC over 24 bytes)
+    # and stateless, so there is no benefit to reusing them.
+    ctx.setdefault("csrf_token", csrf.issue_token(SHARED_DIR))
     body = env.get_template(template).render(**ctx)
     return HTMLResponse(body)
 
@@ -144,6 +201,7 @@ async def do_setup(
     request: Request,  # noqa: ARG001 — kept so /setup signature matches /
     admin_username: str = Form(...),
     admin_password: str = Form(...),
+    setup_token: str = Form(""),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     if state.complete:
@@ -154,9 +212,28 @@ async def do_setup(
     if not state.registration_secret:
         raise HTTPException(503, "Registration shared secret is missing.")
 
+    # Out-of-band ownership proof: the operator finds this token in
+    # `docker logs pureprivacy-wizard` (or via `pureprivacy info`) and
+    # pastes it into the form. Refuses anyone who races the operator on
+    # the loopback port.
+    if not _consume_setup_token(setup_token):
+        raise HTTPException(
+            403,
+            "Setup token missing or wrong. Run `pureprivacy info` (or "
+            "`docker logs pureprivacy-wizard`) to find the one-time setup "
+            "token for this box and paste it into the form.",
+        )
+
     admin_username = admin_username.strip().lower()
-    if not admin_username or not admin_username.replace("-", "").replace("_", "").isalnum():
-        raise HTTPException(400, "Username must be alphanumeric (with - or _).")
+    # Restrict to ASCII alphanumeric (plus - and _). Python's str.isalnum()
+    # is unicode-aware, so without .isascii() we'd accept characters that
+    # Synapse might normalize unpredictably.
+    if (
+        not admin_username
+        or not admin_username.isascii()
+        or not admin_username.replace("-", "").replace("_", "").isalnum()
+    ):
+        raise HTTPException(400, "Username must be ASCII alphanumeric (with - or _).")
     if len(admin_password) < 12:
         raise HTTPException(400, "Password must be at least 12 characters.")
 
@@ -235,19 +312,53 @@ def login_form(request: Request) -> Response:
     return _render("login.html", admin_user=state.admin_user, error=None)
 
 
+# Per-IP login rate limiter.  In-memory deque of attempt timestamps,
+# capped at LOGIN_RATELIMIT_MAX in any LOGIN_RATELIMIT_WINDOW_S window.
+# Once tripped, the client is told to back off; this is a soft block and
+# resets on wizard restart, which is fine for a single-user appliance.
+LOGIN_RATELIMIT_MAX = 5
+LOGIN_RATELIMIT_WINDOW_S = 60
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _login_rate_limit_check(ip: str) -> bool:
+    """Return True if `ip` is allowed to attempt login now."""
+    now = time.time()
+    window = now - LOGIN_RATELIMIT_WINDOW_S
+    history = [t for t in _login_attempts.get(ip, []) if t >= window]
+    if len(history) >= LOGIN_RATELIMIT_MAX:
+        _login_attempts[ip] = history
+        return False
+    history.append(now)
+    _login_attempts[ip] = history
+    return True
+
+
 @app.post("/login")
 def login_submit(
-    request: Request,  # noqa: ARG001
+    request: Request,
     password: str = Form(...),
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     if not state.complete:
         return RedirectResponse("/", status_code=303)
-    if not auth.password_matches(state.admin_password, password):
-        # Constant time on miss already (password_matches uses compare_digest)
-        # but pad with a synthetic delay so a no-cookie attacker can't tell
-        # "user found, password wrong" from "no user yet".
+    client_ip = request.client.host if request.client else "unknown"
+    if not _login_rate_limit_check(client_ip):
+        # Same constant-time delay as a miss — refuse to leak whether the
+        # password would have been correct.
         time.sleep(0.5)
+        return _render(
+            "login.html",
+            admin_user=state.admin_user,
+            error=f"Too many login attempts from {client_ip}. Try again in a minute.",
+        )
+    matched = auth.password_matches(state.admin_password, password)
+    # Sleep on both paths so the response time does not betray a hit vs
+    # miss to a no-cookie attacker. password_matches itself is already
+    # constant-time via compare_digest.
+    time.sleep(0.5)
+    if not matched:
         return _render(
             "login.html",
             admin_user=state.admin_user,
@@ -262,7 +373,7 @@ def login_submit(
 
 
 @app.post("/logout")
-def logout() -> Response:
+def logout(_csrf: None = Depends(csrf.csrf_protect)) -> Response:
     response = RedirectResponse("/login", status_code=303)
     auth.clear_session_cookie(response)
     return response
@@ -307,14 +418,19 @@ async def people_add(
     password: str = Form(""),
     make_admin: str = Form(""),
     principal: str = Depends(require_session),
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     name = username.strip().lower()
-    if not name or not name.replace("-", "").replace("_", "").isalnum():
+    if (
+        not name
+        or not name.isascii()
+        or not name.replace("-", "").replace("_", "").isalnum()
+    ):
         return _render(
             "add_person.html",
             suggested_password=password or random_password(20),
-            error="Username must be alphanumeric (with - or _).",
+            error="Username must be ASCII alphanumeric (with - or _).",
             principal=principal,
         )
     pw = password or None
@@ -373,6 +489,7 @@ async def people_reset_password(
     request: Request,  # noqa: ARG001
     name: str,
     principal: str = Depends(require_session),
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     try:
@@ -404,6 +521,7 @@ async def people_remove(
     request: Request,  # noqa: ARG001
     name: str,
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     try:
@@ -447,6 +565,7 @@ def pair_view(
 def pair_regenerate(
     request: Request,  # noqa: ARG001
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     pair.discard_active_code(SHARED_DIR)
     return RedirectResponse("/pair", status_code=303)
@@ -490,6 +609,7 @@ async def pair_accept(
     request: Request,  # noqa: ARG001
     pair_code: str = Form(...),
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     state = load_setup_state(SHARED_DIR)
     try:
@@ -516,6 +636,7 @@ async def pair_remove(
     request: Request,  # noqa: ARG001
     onion: str = Form(...),
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     if not pair.remove_pairing(SHARED_DIR, onion):
         raise HTTPException(404, "No such peer")
@@ -532,6 +653,7 @@ async def pair_remove(
 def rotate_mcp_token(
     request: Request,  # noqa: ARG001
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     token_path = SHARED_DIR / "secrets" / "mcp_bearer_token"
     prev_path = SHARED_DIR / "secrets" / "mcp_bearer_token.prev"
@@ -562,6 +684,7 @@ def rotate_mcp_token(
 def revoke_prev_mcp_token(
     request: Request,  # noqa: ARG001
     principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
 ) -> Response:
     """Hard-revoke the previous MCP token before its grace window ends.
 

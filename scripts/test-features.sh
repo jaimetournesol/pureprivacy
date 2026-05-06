@@ -308,9 +308,25 @@ green "  /people web flow: create / share / remove all gated and working"
 # =========================================================================
 # Test 4c: Wizard cookie login flow
 # =========================================================================
+# /login is CSRF-protected: the form requires a hidden csrf_token field
+# whose value we have to scrape from the GET /login page, plus a matching
+# Origin header.  This is what real browsers do; the test exercises the
+# same path.
+fetch_csrf_token() {
+    # $1 = path to GET (e.g. /login).  Echos the csrf_token value.
+    curl -s "http://127.0.0.1:8088${1}" \
+        | grep -oE 'name="csrf_token" value="[^"]+"' \
+        | head -n1 \
+        | sed -E 's/.*value="([^"]+)".*/\1/'
+}
+
 step "wizard /login: wrong password rejected"
 WRONG_BODY="$(mktemp)"
+WRONG_CSRF="$(fetch_csrf_token /login)"
+[[ -n "${WRONG_CSRF}" ]] || fail "could not scrape csrf_token from /login"
 curl -s -o "${WRONG_BODY}" -X POST http://127.0.0.1:8088/login \
+    -H "Origin: http://127.0.0.1:8088" \
+    --data-urlencode "csrf_token=${WRONG_CSRF}" \
     --data-urlencode "password=wrong-password" >/dev/null
 [[ "$(cat "${WRONG_BODY}")" == *"That admin password is wrong"* ]] \
     || fail "wrong /login should re-render with error message"
@@ -321,9 +337,13 @@ LIVE_ADMIN_PW="$(docker exec pureprivacy-wizard python3 -c '
 import json;print(json.load(open("/shared/.setup-complete"))["admin_password"])
 ')"
 COOKIE_JAR="$(mktemp)"
+LOGIN_CSRF="$(fetch_csrf_token /login)"
+[[ -n "${LOGIN_CSRF}" ]] || fail "could not scrape csrf_token from /login"
 LOGIN_HTTP="$(curl -s -o /dev/null -w '%{http_code}' \
     -c "${COOKIE_JAR}" \
     -X POST http://127.0.0.1:8088/login \
+    -H "Origin: http://127.0.0.1:8088" \
+    --data-urlencode "csrf_token=${LOGIN_CSRF}" \
     --data-urlencode "password=${LIVE_ADMIN_PW}")"
 [[ "${LOGIN_HTTP}" == "303" ]] || fail "/login should redirect on success (got ${LOGIN_HTTP})"
 grep -q "pureprivacy_wizard" "${COOKIE_JAR}" \

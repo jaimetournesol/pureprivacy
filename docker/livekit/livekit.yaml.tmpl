@@ -13,7 +13,11 @@ rtc:
   # Force TCP relay so the WebRTC media path can ride Tor's hidden-service
   # tunnel.  This adds latency (~100-300 ms above clearnet) but keeps the
   # whole system reachable without exposing a public IP.
-  enable_loopback_candidate: true
+  #
+  # Loopback candidates (the container's 127.0.0.1) leak the fact of a
+  # loopback interface to peers and add useless ICE attempts that always
+  # fail.  Disable.
+  enable_loopback_candidate: false
 
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}

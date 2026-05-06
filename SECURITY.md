@@ -63,7 +63,11 @@ Carried forward from the prior `pureprivacy2docker` security audit
 | M3  | Medium   | Internal HTTP between wizard, Synapse, and MCP is unencrypted                          | Acceptable: confined to docker net.  `synapse-fed-proxy` adds TLS for lk-jwt's specific path. |
 | M4  | Medium   | Pair codes are not signed; trust root is operator-verified QR (TOFU)                   | Verify the peer's onion through a side channel before pasting their code. |
 | M5  | Medium   | Federation cert verification is bypassed for paired `.onion` peers                     | Per-peer (not blanket `*.onion`).  No clearnet peers exist — Tor-only. |
-| M8  | Medium   | Wizard cookie is not `Secure` (no HTTPS on loopback)                                   | Documented; loopback only.                                            |
+| M8  | Medium   | Wizard cookie is not `Secure` (no HTTPS on loopback)                                   | Documented; loopback only.  Cookie is `SameSite=Strict` and every state-changing form carries an HMAC-signed CSRF token; Origin/Referer is validated server-side. |
+| M11 | Medium   | MCP bot encrypts to **all devices** in a room, including unverified ones (`ignore_unverified_devices=True`) | Required by matrix-nio for boots without manual device verification.  An attacker who joins a room or whose unverified device exists in a room can read messages going forward.  v0.2 will surface a wizard flow for verifying devices and turn this flag off. |
+| M12 | Medium   | First-boot `/setup` requires a one-time setup token surfaced in `pureprivacy info` (or `docker logs pureprivacy-wizard`).  Without it, a stray local browser tab could race the operator and seize admin. | Mitigated: token is consumed on first use; setup is otherwise refused. |
+| M13 | Medium   | MCP file tools (`upload_file`/`download_file`) are jailed to `/data/uploads` inside the MCP container; absolute paths or `..` traversal are refused, and symlinked components are rejected. | Required because the bot ingests untrusted prompts from Matrix rooms. |
+| M14 | Medium   | MCP bot only auto-joins room invites from the local homeserver or an explicit `MCP_INVITE_ALLOWLIST`. | Federated peers cannot drag the bot into rooms by sending invites. |
 
 ## What you should do
 

@@ -35,22 +35,40 @@ if [[ -z "${ONION}" ]]; then
     exit 1
 fi
 
-# Mint cert if missing or stale (different onion).  The cert lives in the
-# container's writable layer, but we publish a copy to /shared so lk-jwt
-# can append it to its CA bundle.
+# Mint cert if missing, stale (different onion), or expiring within 30 days.
+# The cert lives in the container's writable layer, but we publish a copy to
+# /shared so lk-jwt can append it to its CA bundle.
+#
+# Validity: 1 year.  No renewal automation in v0.1 — the next container
+# restart after expiry mints a fresh cert and lk-jwt picks it up via the
+# entrypoint trust step.  Expect to restart at least once a year for
+# image updates anyway.
+#
+# Algorithm: Ed25519 (RFC 8032).  Smaller, faster, no parameter selection
+# footguns.  The downside is some old TLS clients refuse Ed25519; lk-jwt
+# uses Go's crypto/tls which has supported Ed25519 since 1.13, and Caddy
+# uses the same stack — so we are safe.
+CERT_VALIDITY_DAYS=365
+CERT_RENEW_WITHIN_DAYS=30
+
 need_mint=false
 if [[ ! -f /etc/sidecar/cert.pem ]] || ! grep -q "${ONION}" /etc/sidecar/cert.pem 2>/dev/null; then
     need_mint=true
+elif ! openssl x509 -checkend $((CERT_RENEW_WITHIN_DAYS * 24 * 3600)) \
+        -noout -in /etc/sidecar/cert.pem >/dev/null 2>&1; then
+    echo "synapse-fed-proxy: existing cert expires within ${CERT_RENEW_WITHIN_DAYS} days; rotating"
+    need_mint=true
 fi
 if "${need_mint}"; then
-    echo "synapse-fed-proxy: minting self-signed cert for ${ONION}"
-    openssl req -x509 -newkey rsa:2048 -nodes \
+    echo "synapse-fed-proxy: minting self-signed Ed25519 cert for ${ONION}"
+    openssl req -x509 -newkey ed25519 -nodes \
         -keyout /etc/sidecar/key.pem \
         -out /etc/sidecar/cert.pem \
-        -days 36500 \
+        -days "${CERT_VALIDITY_DAYS}" \
         -subj "/CN=${ONION}" \
         -addext "subjectAltName=DNS:${ONION},DNS:localhost" \
         2>&1 | sed 's/^/  /'
+    chmod 0600 /etc/sidecar/key.pem
 fi
 
 # Publish the cert so lk-jwt can trust it.  Atomic write.

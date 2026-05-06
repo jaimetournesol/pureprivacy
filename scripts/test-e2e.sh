@@ -77,7 +77,10 @@ step "ensuring wizard setup is complete"
 if docker exec pureprivacy-wizard test -f /shared/.setup-complete; then
     green "  setup already complete — skipping POST"
 else
+    SETUP_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "${SETUP_TOKEN}" ]] || fail "no /shared/secrets/setup_token; wizard not yet started?"
     curl -fsS -X POST http://127.0.0.1:8088/setup \
+        --data-urlencode "setup_token=${SETUP_TOKEN}" \
         --data-urlencode "admin_username=${ADMIN_USER}" \
         --data-urlencode "admin_password=${ADMIN_PASS}" \
         -o /dev/null
