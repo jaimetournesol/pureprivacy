@@ -22,8 +22,15 @@ import hmac
 import secrets as stdlib_secrets
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    # Type-check only: keeps this module importable in tests without
+    # FastAPI installed, and avoids a runtime import cycle.  PEP-563
+    # makes all annotations in this file strings at runtime, so the
+    # symbol is referenced by name only.
+    from fastapi import Request
 
 CSRF_KEY_FILE = "wizard_csrf_key"
 CSRF_TOKEN_LIFETIME_SECONDS = 60 * 60 * 12
