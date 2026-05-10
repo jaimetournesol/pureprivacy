@@ -200,6 +200,15 @@ def root(request: Request) -> Response:
         mcp_user=state.mcp_user,
         mcp_token=state.mcp_token,
         qr_data_url=qr_png_data_url(state.phone_payload()),
+        # Phone cameras open https URLs natively, so these deep-link
+        # straight into the Play Store / App Store on scan.  Generated
+        # per-request for simplicity (a few millis, ~2 KB each).
+        element_android_qr=qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=im.vector.app"
+        ),
+        element_ios_qr=qr_png_data_url(
+            "https://apps.apple.com/app/element-messenger/id1083446067"
+        ),
         peers=peers,
         mcp_grace_remaining_s=state.mcp_grace_remaining_s,
         recovery_passphrase=state.recovery_passphrase,

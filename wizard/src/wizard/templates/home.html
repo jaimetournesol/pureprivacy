@@ -65,6 +65,41 @@
     align-self: flex-start;
   }
   .action-card .qr img { max-width: 220px; display: block; }
+
+  .install-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 4px 0 16px;
+  }
+  .install-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .install-card .platform {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 8px;
+  }
+  .install-card .qr-mini {
+    background: white;
+    padding: 8px;
+    border-radius: 6px;
+    display: inline-block;
+  }
+  .install-card .qr-mini img { max-width: 120px; display: block; }
+  .install-card .label {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 8px 0 0;
+  }
+  .install-row > details summary { cursor: pointer; }
   .action-card .signin {
     border-top: 1px solid var(--border);
     padding-top: 12px;
@@ -165,6 +200,24 @@
     <h3>📱 Connect your phone</h3>
     <p class="lead">Open Element on your phone, tap <b>Edit homeserver</b>
       on the sign-in screen, and enter the address below.</p>
+
+    <details>
+      <summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0;margin-bottom:4px;">
+        Don't have Element yet? Scan with your phone &mdash;
+      </summary>
+      <div class="install-row">
+        <div class="install-card">
+          <p class="platform">📱 Android</p>
+          <div class="qr-mini"><img src="{{ element_android_qr }}" alt="Play Store: Element"></div>
+          <p class="label">Play Store</p>
+        </div>
+        <div class="install-card">
+          <p class="platform">🍎 iPhone</p>
+          <div class="qr-mini"><img src="{{ element_ios_qr }}" alt="App Store: Element"></div>
+          <p class="label">App Store</p>
+        </div>
+      </div>
+    </details>
 
     <div class="signin">
       <div class="field"><b>Address</b><pre class="copyable">http://{{ onion }}</pre></div>
