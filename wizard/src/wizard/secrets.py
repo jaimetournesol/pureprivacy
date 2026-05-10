@@ -125,6 +125,7 @@ def update_admin_password(shared: Path, *, new_password: str) -> None:
 # setup page.  See server.py:root() for the increment sites.
 ADMIN_PASSWORD_VIEW_FILE = "admin_password_views"
 RECOVERY_KEY_VIEW_FILE = "recovery_key_views"
+LOGIN_AUTO_PASSWORD_VIEW_FILE = "login_auto_password_views"
 
 
 def _increment_counter(shared: Path, name: str) -> int:
@@ -181,6 +182,18 @@ def read_recovery_key_views(shared: Path) -> int:
 
 def reset_recovery_key_views(shared: Path) -> None:
     _reset_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def increment_login_auto_password_views(shared: Path) -> int:
+    """Bump the counter every time the unauthenticated login page renders
+    the auto-generated admin password (i.e. first-login is still pending).
+    Surfaced in login.html so an operator about to sign in for the first
+    time can see whether the screen was viewed before they got there."""
+    return _increment_counter(shared, LOGIN_AUTO_PASSWORD_VIEW_FILE)
+
+
+def read_login_auto_password_views(shared: Path) -> int:
+    return _read_counter(shared, LOGIN_AUTO_PASSWORD_VIEW_FILE)
 
 
 # First-login sentinel ------------------------------------------------------

@@ -14,9 +14,25 @@
   screen only; after your first successful sign-in it goes back behind
   the usual hide-by-default treatment.
   <pre class="copyable" style="margin-top:10px;">{{ auto_password }}</pre>
+
+  <div style="margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5;">
+    📊 This screen has been viewed
+    <b style="color:var(--fg);">{{ auto_password_view_count }}</b>
+    time{% if auto_password_view_count != 1 %}s{% endif %}.
+    {% if auto_password_view_count == 1 %}
+    Looks normal &mdash; this is your first view.
+    {% else %}
+    <b style="color:var(--danger);">Higher than 1 means another browser
+    session reached this screen before you did</b> — possible 3rd-party
+    interception of your setup.  Consider changing the password
+    immediately after sign-in.
+    {% endif %}
+  </div>
+
   <p class="muted" style="font-size:12px;margin:8px 0 0;">
-    Recommended: change it to your own value via Step 4 on the home page
-    once you're signed in.</p>
+    Recommended: change the password to your own value via Step 4 on the
+    home page once you're signed in &mdash; that supersedes whatever
+    other parties may have seen.</p>
 </div>
 {% endif %}
 

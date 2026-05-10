@@ -36,6 +36,7 @@ from .docker_client import DockerUnavailable, default_client as docker_default_c
 from .qr import qr_png_data_url
 from .secrets import (
     increment_admin_password_views,
+    increment_login_auto_password_views,
     increment_recovery_key_views,
     is_first_login_pending,
     load_setup_state,
@@ -479,11 +480,19 @@ def login_form(request: Request) -> Response:
     auto_password = (
         state.admin_password if is_first_login_pending(SHARED_DIR) else None
     )
+    # Tamper-detection counter: every render that exposes the auto
+    # password ticks up.  An operator opening this page for the first
+    # time should expect "1"; anything higher means another browser
+    # session reached this screen first.
+    auto_password_view_count = (
+        increment_login_auto_password_views(SHARED_DIR) if auto_password else 0
+    )
     return _render(
         "login.html",
         admin_user=state.admin_user,
         error=None,
         auto_password=auto_password,
+        auto_password_view_count=auto_password_view_count,
     )
 
 
