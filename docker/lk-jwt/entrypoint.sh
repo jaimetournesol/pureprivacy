@@ -59,5 +59,21 @@ if [ -n "${ONION}" ]; then
     fi
 fi
 
-# 3. LIVEKIT_URL and LK_JWT_PORT come from compose env.
+# 3. Rewrite LIVEKIT_URL to use the .onion so external clients (phones
+#    reaching us through Tor) get a JWT that points somewhere they can
+#    actually dial.  Compose ships LIVEKIT_URL=ws://livekit:7880 — that
+#    works inside the docker network but a phone's DNS has no concept of
+#    "livekit".  Tor's HiddenServicePort already maps ${ONION}:7880 to
+#    livekit:7880, so the public form is reachable through the same Tor
+#    SOCKS path the phone is already using to talk to lk-jwt itself.
+#    Only override if compose handed us the default docker-internal form;
+#    leaving anything else alone lets an operator point at an external
+#    livekit by setting LIVEKIT_URL in .env without losing it here.
+if [ -n "${ONION}" ] && [ "${LIVEKIT_URL:-}" = "ws://livekit:7880" ]; then
+    LIVEKIT_URL="ws://${ONION}:7880"
+    export LIVEKIT_URL
+    echo "lk-jwt: rewrote LIVEKIT_URL to ${LIVEKIT_URL} for external clients"
+fi
+
+# 4. LIVEKIT_URL (now external-friendly) and LK_JWT_PORT come from env.
 exec /lk-jwt-service
