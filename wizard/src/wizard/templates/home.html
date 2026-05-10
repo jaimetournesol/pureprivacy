@@ -163,9 +163,8 @@
 <div class="actions">
   <div class="action-card primary">
     <h3>📱 Connect your phone</h3>
-    <p class="lead">Open the camera and scan this QR, then sign in
-      with the details below.</p>
-    <div class="qr"><img src="{{ qr_data_url }}" alt="phone-onboarding QR"></div>
+    <p class="lead">Open Element on your phone, tap <b>Edit homeserver</b>
+      on the sign-in screen, and enter the address below.</p>
 
     <div class="signin">
       <div class="field"><b>Address</b><pre class="copyable">http://{{ onion }}</pre></div>
@@ -179,13 +178,26 @@
       </div>
     </div>
 
+    <details style="margin-top:14px;">
+      <summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0;">
+        Show QR code
+      </summary>
+      <div class="qr" style="margin-top:8px;"><img src="{{ qr_data_url }}" alt="homeserver-address QR"></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;">
+        The QR is a visual copy of the address above.  Don't scan it with
+        your phone's camera &mdash; most phones can't open
+        <code>.onion</code> URLs and will drop the text into a notes app.
+        Scan from inside Element if your client offers a QR option;
+        otherwise just type or paste the address.</p>
+    </details>
+
     <p class="footnote">First time? Install
       <a href="https://element.io/download" target="_blank" rel="noopener">Element</a>
       and (on Android)
       <a href="https://orbot.app/" target="_blank" rel="noopener">Orbot</a> /
       (on iOS) <a href="https://onionbrowser.com/" target="_blank" rel="noopener">Onion Browser</a>
-      to route through Tor.  Element will warn that the homeserver uses
-      HTTP — that's expected for <code>.onion</code>; accept and continue.</p>
+      to route Element through Tor.  Element will warn that the homeserver
+      uses HTTP &mdash; that's expected for <code>.onion</code>; accept and continue.</p>
   </div>
 
   <div class="action-card invite">
