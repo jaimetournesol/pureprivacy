@@ -419,9 +419,12 @@
     </div>
     <div class="signin-field">
       <b>Password</b>
-      <pre class="copyable">{{ admin_password }}</pre>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ admin_password }}</pre>
+      </details>
       <details class="scan-toggle">
-        <summary>Show as QR</summary>
+        <summary>Show as QR (also reveals)</summary>
         <div class="scan-qr"><img src="{{ password_qr }}" alt="password QR"></div>
       </details>
 

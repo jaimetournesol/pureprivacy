@@ -183,6 +183,26 @@ def reset_recovery_key_views(shared: Path) -> None:
     _reset_counter(shared, RECOVERY_KEY_VIEW_FILE)
 
 
+# First-login sentinel ------------------------------------------------------
+#
+# Tracks whether anyone has ever successfully completed POST /login on
+# this box.  Until they have, the login page surfaces the auto-generated
+# admin password directly so an operator who installed via CLI init can
+# get past the chicken-and-egg of "to log in I need the password, to see
+# the password I need to log in".  Cleared after first successful login.
+FIRST_LOGIN_DONE_SENTINEL = ".first-login-done"
+
+
+def is_first_login_pending(shared: Path) -> bool:
+    return not (shared / FIRST_LOGIN_DONE_SENTINEL).is_file()
+
+
+def mark_first_login_done(shared: Path) -> None:
+    sentinel = shared / FIRST_LOGIN_DONE_SENTINEL
+    sentinel.write_text("done\n", encoding="utf-8")
+    sentinel.chmod(0o600)
+
+
 def write_mcp_bot_credentials(
     shared: Path,
     *,

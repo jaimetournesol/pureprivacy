@@ -7,13 +7,26 @@
 <div class="alert"><b>{{ error }}</b></div>
 {% endif %}
 
+{% if auto_password %}
+<div class="alert info" style="line-height:1.55;">
+  <b>First-time sign in.</b>  Your auto-generated admin password is shown
+  below — copy it into the field, then sign in.  It's shown once on this
+  screen only; after your first successful sign-in it goes back behind
+  the usual hide-by-default treatment.
+  <pre class="copyable" style="margin-top:10px;">{{ auto_password }}</pre>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">
+    Recommended: change it to your own value via Step 4 on the home page
+    once you're signed in.</p>
+</div>
+{% endif %}
+
 <form method="post" action="/login" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   {% if admin_user %}
   <div class="field"><b>Signing in as</b><pre>{{ admin_user }}</pre></div>
   {% endif %}
   <label for="password">Admin password</label>
-  <input type="password" id="password" name="password" required autofocus>
+  <input type="password" id="password" name="password" required {% if not auto_password %}autofocus{% endif %}>
   <button type="submit">Sign in</button>
 </form>
 

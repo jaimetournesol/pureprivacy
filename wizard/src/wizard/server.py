@@ -37,7 +37,9 @@ from .qr import qr_png_data_url
 from .secrets import (
     increment_admin_password_views,
     increment_recovery_key_views,
+    is_first_login_pending,
     load_setup_state,
+    mark_first_login_done,
     mark_setup_complete,
     read_admin_password_views,
     read_recovery_key_views,
@@ -468,7 +470,21 @@ def login_form(request: Request) -> Response:
         return RedirectResponse("/", status_code=303)
     if auth.authenticated_principal(request, SHARED_DIR):
         return RedirectResponse("/", status_code=303)
-    return _render("login.html", admin_user=state.admin_user, error=None)
+    # First-ever-login affordance: show the auto-generated password
+    # directly on this page only.  Cleared after the first successful
+    # POST /login below; operators who used `pureprivacy init` from the
+    # CLI never went through web /setup so the password isn't yet in
+    # their browser anywhere — without this they'd have to chase it
+    # down via `pureprivacy info --secrets` on the host.
+    auto_password = (
+        state.admin_password if is_first_login_pending(SHARED_DIR) else None
+    )
+    return _render(
+        "login.html",
+        admin_user=state.admin_user,
+        error=None,
+        auto_password=auto_password,
+    )
 
 
 # Per-IP login rate limiter.  In-memory deque of attempt timestamps,
@@ -528,6 +544,9 @@ def login_submit(
         response,
         auth.issue_cookie(SHARED_DIR, admin_user=state.admin_user or "admin"),
     )
+    # Retire the first-login affordance: subsequent /login renders
+    # won't surface the auto-generated password anymore.
+    mark_first_login_done(SHARED_DIR)
     return response
 
 
