@@ -9,11 +9,15 @@
 #                           LiveKit + lk-jwt-service for MatrixRTC group
 #                           calls and is sticky across runs (subsequent
 #                           `up` keeps voice on); pass --no-voice to drop it.
-#     pureprivacy init [--voice] [-y] [--admin-user USER] [--admin-password PW]
+#     pureprivacy init [--voice] [-y] [--verbose]
+#                       [--admin-user USER] [--admin-password PW]
 #                           One-shot setup: brings the stack up, creates the
-#                           admin user, prints credentials + onion + MCP token.
-#                           Headless alternative to the browser wizard.
-#                           Idempotent: re-running shows the existing summary.
+#                           admin user, prints a QR and the wizard URL.
+#                           --verbose also dumps admin password, MCP bearer,
+#                           and recovery key inline (the old behavior).
+#                           Default keeps the terminal output short — fetch
+#                           secrets later via `pureprivacy info --secrets`.
+#                           Idempotent: re-running shows the same summary.
 #     pureprivacy user add NAME [--admin]
 #     pureprivacy user list
 #     pureprivacy user remove NAME
@@ -523,6 +527,31 @@ read_mcp_token() {
     printf '%s' "${t}"
 }
 
+print_setup_summary_minimal() {
+    # Friendly post-init output: just the QR, the onion, and the browser
+    # dashboard URL.  Hides every secret; the operator runs `pureprivacy
+    # info --secrets` when they want passwords and tokens.  Used by `init`
+    # by default — pass --verbose to fall back to the everything-on-one-
+    # screen `print_setup_summary` instead.
+    local onion wizard_url
+    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    wizard_url="http://127.0.0.1:${WIZARD_PORT:-8088}"
+
+    echo
+    bold "Your private chat server is ready."
+    echo
+    echo "Open this on your phone (with Element + Orbot/Onion Browser):"
+    render_qr_ansi "http://${onion}"
+    echo "    http://${onion}"
+    echo
+    echo "Or open the browser dashboard to copy your sign-in details:"
+    echo "    ${wizard_url}"
+    echo
+    dim "For your admin password, recovery key, and agent token, run:"
+    dim "    pureprivacy info --secrets"
+    echo
+}
+
 print_setup_summary() {
     # Pretty-print everything an operator needs after `init`.  Dumps the
     # admin password and MCP bearer token; only call this from `init` /
@@ -857,12 +886,17 @@ cmd_init() {
     local voice="false"
     local admin_user="" admin_password=""
     local non_interactive="false"
+    # --verbose: print every secret inline at the end (old behavior).
+    # Default is the friendly minimal summary — QR, wizard URL, and a
+    # one-line pointer at `pureprivacy info --secrets` for the rest.
+    local verbose="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --voice) voice="true"; shift ;;
             --admin-user) admin_user="$2"; shift 2 ;;
             --admin-password) admin_password="$2"; shift 2 ;;
             -y|--yes|--non-interactive) non_interactive="true"; shift ;;
+            --verbose) verbose="true"; shift ;;
             *) red "unknown flag: $1"; exit 2 ;;
         esac
     done
@@ -874,8 +908,13 @@ cmd_init() {
     fi
 
     if setup_complete; then
-        green "Setup is already complete — showing the existing summary."
-        print_setup_summary "true"
+        if [[ "${verbose}" == "true" ]]; then
+            green "Setup is already complete — showing the existing summary."
+            print_setup_summary "true"
+        else
+            green "Setup is already complete."
+            print_setup_summary_minimal
+        fi
         return 0
     fi
 
@@ -976,8 +1015,12 @@ PY
     rm -f "${body_path}"
     trap - EXIT
 
-    print_setup_summary "true"
-    dim "Save the password and bearer token now — \`pureprivacy info --secrets\` will reveal them again later, but treat that command as sensitive."
+    if [[ "${verbose}" == "true" ]]; then
+        print_setup_summary "true"
+        dim "Save the password and bearer token now — \`pureprivacy info --secrets\` will reveal them again later, but treat that command as sensitive."
+    else
+        print_setup_summary_minimal
+    fi
 }
 
 cmd_wait() {
