@@ -16,6 +16,12 @@
 # half-finished run doesn't leave services paused.
 set -euo pipefail
 
+# Git Bash: docker.exe mangles container paths.  No-op elsewhere.
+if [[ "${MSYSTEM:-}" == MINGW* || "${MSYSTEM:-}" == MSYS ]]; then
+    docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
+    export -f docker
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
