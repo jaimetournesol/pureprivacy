@@ -4,11 +4,14 @@
 # systemd (Linux) or Docker Desktop's "start at login" (macOS).
 #
 # Usage:
-#     pureprivacy up [--voice | --no-voice]
+#     pureprivacy up [--voice | --no-voice] [--dev]
 #                           Bring the stack up.  The --voice profile adds
 #                           LiveKit + lk-jwt-service for MatrixRTC group
 #                           calls and is sticky across runs (subsequent
 #                           `up` keeps voice on); pass --no-voice to drop it.
+#                           --dev builds images locally instead of pulling
+#                           from the registry — useful when editing
+#                           Dockerfiles.  Default pulls pre-built images.
 #     pureprivacy init [--voice] [-y] [--admin-user USER] [--admin-password PW]
 #                           One-shot setup: brings the stack up, creates the
 #                           admin user, prints credentials + onion + MCP token.
@@ -211,10 +214,16 @@ cmd_up() {
         voice="false"
     fi
     local voice_explicit="false"
+    # --dev: build images locally instead of pulling from the registry.
+    # Useful when iterating on Dockerfiles or running un-released code;
+    # adds ~10 minutes to first run.  Default (off) pulls pre-built
+    # images, which is what end-users see — about 1 minute on broadband.
+    local dev_mode="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --voice)    voice="true";  voice_explicit="true"; shift ;;
             --no-voice) voice="false"; voice_explicit="true"; shift ;;
+            --dev)      dev_mode="true"; shift ;;
             *) red "unknown flag: $1"; exit 2 ;;
         esac
     done
@@ -225,11 +234,17 @@ cmd_up() {
             && mv "${PROFILE_FILE}.tmp" "${PROFILE_FILE}"
     } || { red "Could not write ${PROFILE_FILE}"; exit 1; }
 
-    # Detect whether this is the first build (no images yet) so we can warn
-    # the operator about the long initial wait.
-    local first_build="false"
-    if ! docker image inspect "pureprivacy/synapse:0.1.0" >/dev/null 2>&1; then
-        first_build="true"
+    # Detect whether any pureprivacy image is present locally.  We probe
+    # synapse — the heaviest image — under both the new registry name
+    # and the legacy local tag, so users with cached old builds keep
+    # the fast path.
+    local _registry="${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}"
+    local _image_tag="${PUREPRIVACY_IMAGE_TAG:-0.1.0}"
+    local first_run="false"
+    if ! docker image inspect \
+            "${_registry}/pureprivacy-synapse:${_image_tag}" \
+            "pureprivacy/synapse:0.1.0" >/dev/null 2>&1; then
+        first_run="true"
     fi
 
     if [[ "${voice}" == "true" ]]; then
@@ -265,18 +280,28 @@ cmd_up() {
         dim "  (voice profile remembered from last \`up --voice\`; pass --no-voice to drop it)"
     fi
 
-    if [[ "${first_build}" == "true" ]]; then
-        yellow "First run detected — building images.  This takes 5–10 minutes"
-        yellow "on a laptop, longer on a Raspberry Pi.  Hang on; we'll keep you"
-        yellow "posted with a dot every ~10 seconds during health checks."
+    if [[ "${first_run}" == "true" ]]; then
+        if [[ "${dev_mode}" == "true" ]]; then
+            yellow "First run detected (--dev) — building images locally."
+            yellow "This takes 5–10 minutes on a laptop, longer on a Pi."
+        else
+            yellow "First run detected — downloading images (~1 minute)."
+            yellow "Pass --dev to build from source instead."
+        fi
         echo
     fi
 
-    # Show docker compose's own progress on first build, hide it for steady-state up.
-    if [[ "${first_build}" == "true" ]]; then
-        docker compose -p "${PROJECT}" up -d --remove-orphans
+    # --dev forces a rebuild from source; default uses the registry images
+    # declared on each service's `image:` line.  Show docker compose's
+    # progress on first run, hide it for steady-state up.
+    local up_flags=("-d" "--remove-orphans")
+    if [[ "${dev_mode}" == "true" ]]; then
+        up_flags+=("--build")
+    fi
+    if [[ "${first_run}" == "true" ]]; then
+        docker compose -p "${PROJECT}" up "${up_flags[@]}"
     else
-        docker compose -p "${PROJECT}" up -d --remove-orphans >/dev/null
+        docker compose -p "${PROJECT}" up "${up_flags[@]}" >/dev/null
     fi
     echo
     for svc in "${SERVICES[@]}"; do
