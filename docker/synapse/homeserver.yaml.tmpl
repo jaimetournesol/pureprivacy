@@ -71,9 +71,15 @@ url_preview_enabled: false
 report_stats: false
 
 # 1:1 voice via coturn, TCP-only relay because it has to traverse Tor.
+# The URIs go in the response from /_matrix/client/r0/voip/turnServer,
+# i.e. they're consumed by EXTERNAL clients (phones reaching us through
+# Tor) — so the hostname must be the .onion that Tor maps to coturn,
+# not the docker-internal "coturn" alias.  Tor's HiddenServicePort
+# routes ${SERVER_NAME}:3478 / 5349 / 49152-61 → coturn:* per the
+# torrc.  See docs/architecture.md for the port table.
 turn_uris:
-  - "turn:coturn:3478?transport=tcp"
-  - "turns:coturn:5349?transport=tcp"
+  - "turn:${SERVER_NAME}:3478?transport=tcp"
+  - "turns:${SERVER_NAME}:5349?transport=tcp"
 turn_shared_secret: "${TURN_SHARED_SECRET}"
 turn_user_lifetime: 86400000
 turn_allow_guests: false
