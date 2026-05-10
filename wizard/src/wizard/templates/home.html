@@ -205,6 +205,60 @@
   }
   .signin-field .scan-qr img { max-width: 130px; display: block; }
 
+  /* ---- Audit counter + change-password ---------------------------- */
+  .audit-line {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .audit-line b { color: var(--fg); font-weight: 600; }
+  .audit-line .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 2px;
+    margin: 0;
+    text-decoration: underline;
+  }
+  .audit-line .link-btn:hover { filter: brightness(1.1); }
+  .audit-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 4px 0 0;
+    line-height: 1.5;
+    font-style: italic;
+  }
+  .change-password {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .change-password > summary {
+    color: var(--accent);
+    font-size: 13px;
+    cursor: pointer;
+    list-style: none;
+    padding: 4px 0;
+    font-weight: 500;
+  }
+  .change-password > summary::-webkit-details-marker { display: none; }
+  .pw-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .pw-form label {
+    margin-top: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .pw-form input[type=password] {
+    margin-top: 4px;
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+  .pw-form button { align-self: flex-start; margin-top: 8px; }
+
   /* ---- Settings disclosure (collapsed by default) ------------------ */
   .settings {
     margin-top: 22px;
@@ -365,14 +419,68 @@
     </div>
     <div class="signin-field">
       <b>Password</b>
-      <details>
-        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
-        <pre class="copyable">{{ admin_password }}</pre>
-      </details>
+      <pre class="copyable">{{ admin_password }}</pre>
       <details class="scan-toggle">
-        <summary>Show as QR (also reveals)</summary>
+        <summary>Show as QR</summary>
         <div class="scan-qr"><img src="{{ password_qr }}" alt="password QR"></div>
       </details>
+
+      <div class="audit-line">
+        📊 This password has been visible
+        <b>{{ password_view_count }}</b> time{% if password_view_count != 1 %}s{% endif %}
+        since the last reset.
+        <form method="post" action="/reset-password-counter" style="display:inline;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link-btn">Reset counter</button>
+        </form>
+      </div>
+      <p class="audit-hint">
+        Compare this against the number of times you've opened this
+        page yourself.  A higher count means another browser session
+        has viewed it &mdash; possible 3rd-party interception.
+      </p>
+
+      <details class="change-password">
+        <summary>Set your own password &rarr;</summary>
+        <p class="muted" style="font-size:12px;margin:8px 0 6px;">
+          Recommended on first login.  Pick something you'll remember
+          (or store in a password manager).  <b>This signs out every
+          phone using this account &mdash; you'll need to sign in again
+          with the new password.</b>
+        </p>
+        <form method="post" action="/change-admin-password" class="pw-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>New password (12+ characters)
+            <input type="password" name="new_password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <label>Confirm
+            <input type="password" name="new_password_confirm" autocomplete="new-password" minlength="12" required>
+          </label>
+          <button type="submit" class="danger">Change password</button>
+        </form>
+      </details>
+
+      {% if password_changed %}
+      <div class="alert info" style="margin-top:10px;">
+        ✓ Admin password changed.  All other devices were signed out;
+        re-sign-in on your phone with the new password.
+      </div>
+      {% endif %}
+      {% if password_error %}
+      <div class="alert" style="margin-top:10px;">
+        Password change failed:
+        {% if password_error == "too-short" %}new password must be at least 12 characters.
+        {% elif password_error == "mismatch" %}the confirmation didn't match.
+        {% elif password_error == "not-setup" %}setup state is missing — contact support.
+        {% else %}server-side error — check <code>pureprivacy logs wizard</code>.
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if counter_reset %}
+      <div class="alert info" style="margin-top:10px;">
+        ✓ View counter reset to 0.
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

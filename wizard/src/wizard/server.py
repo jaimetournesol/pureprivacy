@@ -35,8 +35,12 @@ from . import recovery
 from .docker_client import DockerUnavailable, default_client as docker_default_client
 from .qr import qr_png_data_url
 from .secrets import (
+    increment_admin_password_views,
     load_setup_state,
     mark_setup_complete,
+    read_admin_password_views,
+    reset_admin_password_views,
+    update_admin_password,
     write_mcp_bot_credentials,
 )
 from .synapse import SynapseAdminClient, random_password
@@ -274,6 +278,14 @@ def root(request: Request) -> Response:
     if not auth.authenticated_principal(request, SHARED_DIR):
         return RedirectResponse("/login", status_code=303)
     peers = pair.load_pairings(SHARED_DIR)
+    # Bump the audit counter — this render embeds the admin password in
+    # the rendered HTML, so it counts as a reveal even if the user never
+    # clicks "click to reveal".  The counter is shown on the page so an
+    # operator can compare it to their own session count.
+    password_view_count = increment_admin_password_views(SHARED_DIR)
+    # Flash messages from the change-password / reset-counter handlers,
+    # carried via query params after the POST→redirect→GET round-trip.
+    qp = request.query_params
     return _render(
         "home.html",
         onion=state.onion,
@@ -281,6 +293,10 @@ def root(request: Request) -> Response:
         admin_password=state.admin_password,
         mcp_user=state.mcp_user,
         mcp_token=state.mcp_token,
+        password_view_count=password_view_count,
+        password_changed=qp.get("password-changed") == "1",
+        password_error=qp.get("password-error"),
+        counter_reset=qp.get("counter-reset") == "1",
         qr_data_url=qr_png_data_url(state.phone_payload()),
         # Per-field QRs so the user can scan one piece at a time with
         # their phone's camera, tap "copy", and paste into Element.
@@ -776,6 +792,60 @@ async def pair_remove(
     await _apply_federation_change(reason=f"remove {onion}")
     log.info("federation closed for %s", onion)
     return RedirectResponse("/pair", status_code=303)
+
+
+# ---- Admin password (change + counter reset) -----------------------------
+
+
+@app.post("/change-admin-password")
+async def change_admin_password(
+    request: Request,  # noqa: ARG001
+    new_password: str = Form(...),
+    new_password_confirm: str = Form(...),
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Operator-initiated admin password change.
+
+    Calls Synapse's admin reset_password endpoint (same path used by
+    `pureprivacy admin reset-password`) and updates `.setup-complete` so
+    `pureprivacy info --secrets` reports the new value.  Synapse's
+    reset endpoint logs out every other device on the admin account,
+    so any phone signed in with the old password will need to re-sign-in.
+    """
+    state = load_setup_state(SHARED_DIR)
+    if not state.complete or not state.admin_user:
+        return RedirectResponse("/?password-error=not-setup", status_code=303)
+    if not new_password or len(new_password) < 12:
+        return RedirectResponse("/?password-error=too-short", status_code=303)
+    if new_password != new_password_confirm:
+        return RedirectResponse("/?password-error=mismatch", status_code=303)
+    try:
+        # Reuse the admin_cli helper that owns the Synapse-side reset
+        # path, then update the local sentinel atomically.
+        localpart = state.admin_user.lstrip("@").split(":", 1)[0]
+        await admin_cli.reset_user_password(
+            state, name=localpart, password=new_password
+        )
+        update_admin_password(SHARED_DIR, new_password=new_password)
+        # Reset the audit counter — the operator just rotated; any
+        # subsequent views are post-rotation and worth tracking fresh.
+        reset_admin_password_views(SHARED_DIR)
+    except Exception:  # noqa: BLE001
+        log.exception("admin password change failed")
+        return RedirectResponse("/?password-error=server", status_code=303)
+    return RedirectResponse("/?password-changed=1", status_code=303)
+
+
+@app.post("/reset-password-counter")
+def reset_password_counter(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Zero the admin-password reveal counter."""
+    reset_admin_password_views(SHARED_DIR)
+    return RedirectResponse("/?counter-reset=1", status_code=303)
 
 
 # ---- MCP token rotation ---------------------------------------------------
