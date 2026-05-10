@@ -1,3 +1,12 @@
+# hadolint global ignore=DL3002
+# DL3002 (last USER should not be root) is deliberately suppressed: the
+# coturn upstream entrypoint needs root to render /etc/coturn/turn-
+# server.conf with envsubst, and turnserver itself drops to a service
+# user once it has bound its ports.  The effective hardening lives in
+# docker-compose.yml — cap_drop:ALL + no-new-privileges:true plus a
+# minimal cap_add list — which makes in-container root harmless on
+# the host.  Hadolint can't see the compose-level controls.
+
 FROM coturn/coturn:4.6.2-r12-alpine
 
 USER root
