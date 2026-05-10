@@ -203,12 +203,17 @@
   // navigator.clipboard where available, falls back to a Selection.
   (function () {
     function attachCopy(pre) {
+      // Capture the original text BEFORE we append the button — appending
+      // the button puts its "copy" textContent inside the <pre>, which
+      // would otherwise leak into the clipboard payload as a "…copy"
+      // suffix when the user clicks.
+      var originalText = pre.textContent.replace(/\s+$/, "");
       var btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "copy";
       btn.className = "copy-btn";
       btn.addEventListener("click", function () {
-        var txt = pre.textContent.replace(/\s+$/, "");
+        var txt = originalText;
         var ok = function () {
           btn.textContent = "copied";
           btn.classList.add("ok");
@@ -220,13 +225,17 @@
         if (navigator.clipboard && window.isSecureContext) {
           navigator.clipboard.writeText(txt).then(ok, function () {});
         } else {
-          var sel = window.getSelection();
-          var r = document.createRange();
-          r.selectNodeContents(pre);
-          sel.removeAllRanges();
-          sel.addRange(r);
+          // Fallback: stash the value in a hidden textarea, select that,
+          // execCommand("copy").  Selecting the <pre> itself would copy
+          // the appended button's text too.
+          var ta = document.createElement("textarea");
+          ta.value = txt;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
           try { document.execCommand("copy"); ok(); } catch (e) {}
-          sel.removeAllRanges();
+          document.body.removeChild(ta);
         }
       });
       pre.appendChild(btn);
