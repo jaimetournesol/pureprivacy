@@ -208,12 +208,21 @@ def root(request: Request) -> Response:
         username_qr=qr_png_data_url(state.admin_user or ""),
         password_qr=qr_png_data_url(state.admin_password or ""),
         # Phone cameras open https URLs natively, so these deep-link
-        # straight into the Play Store / App Store on scan.
+        # straight into the Play Store / App Store on scan.  Element is
+        # the messaging client (classic, not Element X); Orbot is the
+        # Tor VPN that lets Element reach .onion addresses.  All four
+        # are needed for the average user; we surface all four QRs.
         element_android_qr=qr_png_data_url(
             "https://play.google.com/store/apps/details?id=im.vector.app"
         ),
         element_ios_qr=qr_png_data_url(
             "https://apps.apple.com/app/element-messenger/id1083446067"
+        ),
+        orbot_android_qr=qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=org.torproject.android"
+        ),
+        orbot_ios_qr=qr_png_data_url(
+            "https://apps.apple.com/app/orbot/id1609461599"
         ),
         peers=peers,
         mcp_grace_remaining_s=state.mcp_grace_remaining_s,

@@ -145,6 +145,31 @@
     margin: 0 0 8px;
     line-height: 1.5;
   }
+  .action-card .setup-steps {
+    margin-top: 16px;
+    padding: 14px 14px 14px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .action-card .setup-steps-heading {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .action-card .setup-steps ol {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .action-card .setup-steps ol li { margin-bottom: 6px; }
+  .action-card .setup-steps ol li:last-child { margin-bottom: 0; }
+  .action-card .setup-steps ol li b { color: var(--fg); font-weight: 600; }
   .action-card .footnote {
     color: var(--muted);
     font-size: 12px;
@@ -230,26 +255,39 @@
 
     <details>
       <summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0;margin-bottom:4px;">
-        Don't have Element yet? Scan with your phone &mdash;
+        Don't have the apps yet? Scan with your phone &mdash;
       </summary>
+
+      <p class="muted" style="font-size:12px;margin:0 0 8px;">
+        You need <b>both</b> apps: <b>Element</b> for messaging
+        (the blue logo &mdash; <i>not</i> Element X) and
+        <b>Orbot</b> for the Tor VPN that lets Element reach
+        <code>.onion</code> addresses.</p>
+
       <div class="install-row">
         <div class="install-card">
-          <p class="platform">📱 Android</p>
+          <p class="platform">📱 Element &middot; Android</p>
           <div class="qr-mini"><img src="{{ element_android_qr }}" alt="Play Store: Element"></div>
           <p class="label">Play Store</p>
         </div>
         <div class="install-card">
-          <p class="platform">🍎 iPhone</p>
+          <p class="platform">🍎 Element &middot; iPhone</p>
           <div class="qr-mini"><img src="{{ element_ios_qr }}" alt="App Store: Element"></div>
           <p class="label">App Store</p>
         </div>
       </div>
-      <p class="muted" style="font-size:12px;margin:8px 0 0;line-height:1.5;">
-        Install <b>Element</b> (the blue logo &mdash; <i>not</i>
-        Element X).  Element X is the newer client but its sliding-sync
-        over Tor is rough in v0.1 and you'll get the same
-        "cannot reach homeserver" error.  The QRs above point at the
-        original Element on each store.</p>
+      <div class="install-row" style="margin-top:8px;">
+        <div class="install-card">
+          <p class="platform">🧅 Orbot &middot; Android</p>
+          <div class="qr-mini"><img src="{{ orbot_android_qr }}" alt="Play Store: Orbot"></div>
+          <p class="label">Play Store</p>
+        </div>
+        <div class="install-card">
+          <p class="platform">🧅 Orbot &middot; iPhone</p>
+          <div class="qr-mini"><img src="{{ orbot_ios_qr }}" alt="App Store: Orbot"></div>
+          <p class="label">App Store</p>
+        </div>
+      </div>
     </details>
 
     <div class="signin">
@@ -288,15 +326,25 @@
       </div>
     </div>
 
-    <p class="footnote">First time? Install the original
-      <a href="https://element.io/download" target="_blank" rel="noopener">Element</a>
-      (blue logo &mdash; <em>not Element X</em>) and
-      <a href="https://orbot.app/" target="_blank" rel="noopener">Orbot</a>
-      (Android <em>and</em> iOS).  <b>Open Orbot and tap Start before
-      signing in</b> &mdash; Element relies on Orbot's VPN to reach
-      <code>.onion</code> addresses.  Element will warn that the
-      homeserver uses HTTP; that's expected for <code>.onion</code>,
-      accept and continue.</p>
+    <div class="setup-steps">
+      <p class="setup-steps-heading">First-time setup &mdash; do these in order:</p>
+      <ol>
+        <li>Install <b>Element</b> (blue logo &mdash; <em>not Element X</em>)
+          and <b>Orbot</b>.  Use the QRs in the disclosure above.</li>
+        <li>Open <b>Element</b> once and close it &mdash; this lets Orbot
+          see Element in its app list.</li>
+        <li>Open <b>Orbot</b> and tap <b>Start</b>.  Allow the VPN
+          permission prompt.  Wait for "Connected to the Tor network".</li>
+        <li>(Optional, recommended) In Orbot, switch to <b>Tor-Enabled
+          Apps</b> mode and tick only Element.  Saves battery and
+          stops your other apps from going through Tor.</li>
+        <li>Open <b>Element</b>, tap <b>Edit homeserver</b> on the
+          sign-in screen, and enter the address above.  Element will
+          warn the server uses HTTP &mdash; that's expected for
+          <code>.onion</code>, accept and continue.  Then enter the
+          username and password.</li>
+      </ol>
+    </div>
   </div>
 
   <div class="action-card invite">
