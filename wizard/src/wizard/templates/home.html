@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+{% block title %}Welcome{% endblock %}
+{% block body %}
+
+<style>
+  .welcome-hero {
+    text-align: center;
+    padding: 4px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .welcome-hero h2 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .welcome-hero p {
+    color: var(--muted);
+    margin: 0;
+    font-size: 14px;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  @media (min-width: 600px) {
+    .actions { grid-template-columns: 1.35fr 1fr; align-items: stretch; }
+  }
+  .action-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+  }
+  .action-card.primary {
+    border-color: var(--accent);
+    background:
+      radial-gradient(circle at 0% 0%, rgba(88,192,255,0.10), transparent 60%),
+      var(--card);
+  }
+  .action-card h3 {
+    margin: 0 0 6px;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  .action-card .lead {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 14px;
+    line-height: 1.5;
+  }
+  .action-card .qr {
+    margin: 4px 0 14px;
+    padding: 12px;
+    background: white;
+    border-radius: 8px;
+    align-self: flex-start;
+  }
+  .action-card .qr img { max-width: 220px; display: block; }
+  .action-card .signin {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: auto;
+  }
+  .action-card .signin .field { margin: 6px 0; }
+  .action-card .signin .field b {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 12px;
+    display: block;
+    margin-bottom: 3px;
+  }
+  .action-card .signin pre {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+  .action-card .signin pre.copyable { padding-right: 56px; }
+  .action-card .footnote {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 12px 0 0;
+    line-height: 1.5;
+  }
+  .action-card .footnote a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .action-card .footnote a:hover { text-decoration: underline; }
+  .action-card.invite { justify-content: space-between; }
+  .action-card.invite .btn { align-self: flex-start; }
+
+  .quickstats {
+    display: flex;
+    gap: 24px;
+    margin: 0 0 24px;
+    padding: 12px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .quickstats b { color: var(--fg); font-weight: 600; }
+  .quickstats .ok { color: var(--ok); }
+
+  .settings {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .settings > summary {
+    padding: 14px 18px;
+    cursor: pointer;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+    list-style: none;
+    user-select: none;
+    transition: background 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .settings > summary::-webkit-details-marker { display: none; }
+  .settings > summary::after {
+    content: "▾";
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  .settings[open] > summary::after { transform: rotate(180deg); }
+  .settings > summary:hover { background: rgba(88,192,255,0.04); }
+  .settings > summary .muted { font-weight: 400; font-size: 13px; }
+  .settings .panel { padding: 4px 18px 18px; }
+  .settings h4 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin: 18px 0 8px;
+    font-weight: 600;
+  }
+  .settings .field { margin: 8px 0 12px; }
+  .settings .field b { color: var(--muted); font-weight: 500; font-size: 13px; display: block; margin-bottom: 4px; }
+</style>
+
+<div class="welcome-hero">
+  <h2>Your private chat server is up.</h2>
+  <p>End-to-end encrypted &middot; reachable only over Tor &middot; only you control it.</p>
+</div>
+
+<div class="actions">
+  <div class="action-card primary">
+    <h3>📱 Connect your phone</h3>
+    <p class="lead">Open the camera and scan this QR, then sign in
+      with the details below.</p>
+    <div class="qr"><img src="{{ qr_data_url }}" alt="phone-onboarding QR"></div>
+
+    <div class="signin">
+      <div class="field"><b>Address</b><pre class="copyable">http://{{ onion }}</pre></div>
+      <div class="field"><b>Username</b><pre class="copyable">{{ admin_user }}</pre></div>
+      <div class="field">
+        <b>Password</b>
+        <details>
+          <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+          <pre class="copyable">{{ admin_password }}</pre>
+        </details>
+      </div>
+    </div>
+
+    <p class="footnote">First time? Install
+      <a href="https://element.io/download" target="_blank" rel="noopener">Element</a>
+      and (on Android)
+      <a href="https://orbot.app/" target="_blank" rel="noopener">Orbot</a> /
+      (on iOS) <a href="https://onionbrowser.com/" target="_blank" rel="noopener">Onion Browser</a>
+      to route through Tor.  Element will warn that the homeserver uses
+      HTTP — that's expected for <code>.onion</code>; accept and continue.</p>
+  </div>
+
+  <div class="action-card invite">
+    <div>
+      <h3>👥 Invite a friend</h3>
+      <p class="lead">Add an account for someone you want to chat with.
+        They get their own username and a QR to sign in &mdash; same
+        experience as connecting your own phone.</p>
+    </div>
+    <div>
+      <a class="btn" href="/people/add">Invite someone</a>
+      <p class="footnote" style="margin-top:10px;">Already added some people?
+        <a href="/people">See who's on the box</a>.</p>
+    </div>
+  </div>
+</div>
+
+<div class="quickstats">
+  <div><span class="ok">●</span> server up &amp; healthy</div>
+  {% if peers and peers|length > 0 %}
+  <div><b>{{ peers|length }}</b> paired peer{% if peers|length != 1 %}s{% endif %}</div>
+  {% endif %}
+  <div style="margin-left:auto;">{{ onion[:24] }}…<span class="muted"> &middot; your onion</span></div>
+</div>
+
+<details class="settings">
+  <summary>
+    <span>⚙ Settings &amp; advanced</span>
+    <span class="muted">recovery key &middot; federation &middot; AI agent</span>
+  </summary>
+  <div class="panel">
+
+    {% if recovery_passphrase %}
+    <h4>Recovery key</h4>
+    <p class="muted" style="font-size:13px;">If you forget your password,
+      this resets it without wiping the box.  Write it down somewhere safe
+      &mdash; without both the password and this key, the only way back in
+      is to start over.</p>
+    <div class="field">
+      <b>Recovery key</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ recovery_passphrase }}</pre>
+      </details>
+    </div>
+    <p class="muted" style="font-size:12px;">When you need it, run on the host:
+      <code>pureprivacy admin reset-password "&lt;your-recovery-key&gt;"</code></p>
+    {% endif %}
+
+    <h4>Federation with another box</h4>
+    <p class="muted" style="font-size:13px;">Pair with someone else's
+      PurePrivacy box so users on either side can join shared rooms.
+      {% if peers %}You have <b>{{ peers|length }}</b> peer{% if peers|length != 1 %}s{% endif %} paired.{% else %}You have no peers paired yet.{% endif %}</p>
+    <p><a class="btn ghost" href="/pair">Manage federation</a></p>
+
+    <h4>AI agent (MCP)</h4>
+    <p class="muted" style="font-size:13px;">Connect Claude Code, Cursor,
+      Cline, or any MCP-speaking agent.  Invite the bot to a room to let
+      the agent read or post in it.</p>
+    <div class="field"><b>Endpoint</b><pre class="copyable">http://127.0.0.1:8089/mcp</pre></div>
+    <div class="field">
+      <b>Bearer token</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ mcp_token }}</pre>
+      </details>
+    </div>
+    <div class="field"><b>Bot Matrix ID</b><pre class="copyable">{{ mcp_user }}</pre></div>
+
+    {% if mcp_grace_remaining_s and mcp_grace_remaining_s > 0 %}
+    <div class="alert">
+      <b>Previous token still accepted for ~{{ (mcp_grace_remaining_s // 60) }} min {{ mcp_grace_remaining_s % 60 }} s.</b>
+      Reconfigure your agents with the new token above; once the window
+      closes, the old token starts returning 403.
+    </div>
+    <form method="post" action="/revoke-prev-token"
+          data-confirm="Revoke the previous token immediately?  Any agent still using it will start getting 403s on its next request.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Revoke previous token now</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="/rotate-token"
+          data-confirm="Rotate the MCP token?  The new token is shown immediately; the old token keeps working for 10 minutes so your agents can migrate.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Rotate MCP token</button>
+    </form>
+    <p class="muted" style="font-size:12px;">Rotation has a 10-minute grace
+      window so agents can migrate; <i>Revoke previous token now</i> cuts
+      it off immediately.</p>
+
+  </div>
+</details>
+
+{% endblock %}

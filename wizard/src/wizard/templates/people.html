@@ -2,13 +2,13 @@
 {% set active = "people" %}
 {% block title %}People{% endblock %}
 {% block body %}
-<h2 style="margin-top:0;">People on this box</h2>
-<p class="muted">Each person below has a Matrix account on your homeserver.
-Add a person to give them their own account; reset a password to issue them
-a fresh one (their existing devices get logged out); remove deactivates the
-account on Synapse.</p>
+<h2 style="margin-top:0;">Friends on this box</h2>
+<p class="muted">Each friend below has their own account on your private chat
+server.  Invite someone to give them a username and sign-in QR.  Reset a
+password if they forget it (their existing devices sign out).  Remove
+deactivates the account.</p>
 
-<p><a class="btn" href="/people/add">Add a person</a></p>
+<p><a class="btn" href="/people/add">Invite a friend</a></p>
 
 <div style="margin-top:16px;">
 {% for u in users if u.user_id != mcp_user %}

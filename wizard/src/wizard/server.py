@@ -193,7 +193,7 @@ def root(request: Request) -> Response:
         return RedirectResponse("/login", status_code=303)
     peers = pair.load_pairings(SHARED_DIR)
     return _render(
-        "done.html",
+        "home.html",
         onion=state.onion,
         admin_user=state.admin_user,
         admin_password=state.admin_password,
