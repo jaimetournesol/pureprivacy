@@ -1144,7 +1144,10 @@ cmd_backup() {
         esac
     done
 
-    local default_name="./backups/pureprivacy-$(date +%Y-%m-%d-%H%M%S).tar.gz"
+    # SC2155: declare and assign separately so a non-zero exit from
+    # the command substitution isn't masked by `local`'s own exit code.
+    local default_name
+    default_name="./backups/pureprivacy-$(date +%Y-%m-%d-%H%M%S).tar.gz"
     [[ "${encrypt}" == "true" ]] && default_name="${default_name}.enc"
     local out="${positional[0]:-${default_name}}"
     local outdir
@@ -1248,7 +1251,7 @@ cmd_restore() {
     src="$(cd "$(dirname "${src}")" && pwd)/$(basename "${src}")"
 
     red "Restore will OVERWRITE every PurePrivacy volume on this host."
-    read -p "Type 'restore' to confirm (anything else cancels): " confirm
+    read -r -p "Type 'restore' to confirm (anything else cancels): " confirm
     if [[ "${confirm}" != "restore" ]]; then
         echo "Cancelled."
         exit 0
@@ -1318,7 +1321,7 @@ cmd_reset() {
     ensure_docker
     red "This will destroy ALL PurePrivacy data: messages, keys, accounts, the onion identity."
     red "Existing containers, volumes, and networks for the 'pureprivacy' project will be removed."
-    read -p "Type 'reset' to confirm (anything else cancels): " confirm
+    read -r -p "Type 'reset' to confirm (anything else cancels): " confirm
     if [[ "${confirm}" != "reset" ]]; then
         echo "Cancelled."
         exit 0

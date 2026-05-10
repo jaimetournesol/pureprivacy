@@ -54,7 +54,7 @@ green "  onion + setup preserved across down/up"
 # Test 4: MCP bot session survives restart.
 step "test 4: MCP bot session persists across restart"
 docker compose -p pureprivacy restart mcp >/dev/null
-for attempt in $(seq 1 20); do
+for _ in $(seq 1 20); do
     sleep 2
     ready="$(curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null \
         | python3 -c 'import sys, json; print(json.load(sys.stdin).get("matrix_bot_ready", False))' \
