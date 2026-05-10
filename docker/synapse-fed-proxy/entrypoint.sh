@@ -111,7 +111,18 @@ cat > /etc/sidecar/Caddyfile <<EOF
 :80 {
     reverse_proxy synapse:8008
 }
+
+# WSS terminator for LiveKit (voice profile).  Element Call / MatrixRTC
+# refuses plain ws:// over Tor, so we terminate TLS here with the same
+# self-signed onion cert (which lk-jwt already publishes for the Synapse
+# matrix:// path) and reverse-proxy the upgrade through to livekit:7880.
+# Caddy's reverse_proxy directive handles the WS upgrade transparently.
+# Tor maps ${ONION}:7443 → 172.30.0.13:7443 (this container) per torrc.
+:7443 {
+    tls /etc/sidecar/cert.pem /etc/sidecar/key.pem
+    reverse_proxy livekit:7880
+}
 EOF
 
-echo "synapse-fed-proxy: serving https://${ONION}:{443,8448} → synapse:8008"
+echo "synapse-fed-proxy: serving https://${ONION}:{443,8448,7443} → synapse / livekit"
 exec caddy run --config /etc/sidecar/Caddyfile --adapter caddyfile
