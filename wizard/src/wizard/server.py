@@ -171,6 +171,88 @@ def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _humanize_age_ms(ms: int) -> str:
+    """Convert an age-in-ms to a friendly relative string."""
+    if ms < 0:
+        ms = 0
+    s = ms // 1000
+    if s < 5:
+        return "just now"
+    if s < 60:
+        return f"{s}s ago"
+    m = s // 60
+    if m < 60:
+        return f"{m}m ago"
+    h = m // 60
+    if h < 24:
+        return f"{h}h ago"
+    d = h // 24
+    return f"{d}d ago"
+
+
+@app.get("/api/setup-status")
+async def setup_status(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+) -> JSONResponse:
+    """JSON snapshot of setup state for the live status panel on /.
+
+    Polled from the home page every few seconds.  Returns the onion
+    address plus the admin's logged-in devices, with the wizard's own
+    backend session filtered out so only real phones show up.
+    """
+    state = load_setup_state(SHARED_DIR)
+    payload: dict[str, Any] = {
+        "onion": state.onion or "",
+        "devices": [],
+        "error": None,
+    }
+    if not state.complete:
+        payload["error"] = "setup-not-complete"
+        return JSONResponse(payload)
+
+    try:
+        client, token = await admin_cli.admin_session(state)
+        try:
+            r = await client.get(
+                f"{SYNAPSE_URL}/_matrix/client/v3/devices",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5.0,
+            )
+            if r.status_code != 200:
+                payload["error"] = f"synapse {r.status_code}"
+                return JSONResponse(payload)
+            now_ms = int(time.time() * 1000)
+            raw = r.json().get("devices", [])
+            devices: list[dict[str, Any]] = []
+            for d in raw:
+                # Two filters:
+                #  1. Tagged backend session — wizard's own admin login,
+                #     not a phone.
+                #  2. Anonymous sessions (display_name is null/empty)
+                #     are nearly always CLI/admin tooling.  Real Matrix
+                #     clients (Element, Cinny, FluffyChat, etc.) set a
+                #     display_name on login, so requiring one cleanly
+                #     hides the leftover backend devices that predate
+                #     the tagging change.
+                name = d.get("display_name")
+                if not name or name == admin_cli.ADMIN_BACKEND_DEVICE_NAME:
+                    continue
+                last_seen = d.get("last_seen_ts") or 0
+                devices.append({
+                    "device_id": (d.get("device_id") or "")[:8],
+                    "display_name": name,
+                    "last_seen_relative": _humanize_age_ms(now_ms - last_seen) if last_seen else "never",
+                })
+            payload["devices"] = devices
+        finally:
+            await client.aclose()
+    except Exception:  # noqa: BLE001
+        log.exception("setup-status: failed to fetch devices")
+        payload["error"] = "fetch-failed"
+    return JSONResponse(payload)
+
+
 # ---- root: pre-setup form, or post-login dashboard ------------------------
 
 
