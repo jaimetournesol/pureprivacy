@@ -569,6 +569,53 @@ def logout(_csrf: None = Depends(_csrf_protect)) -> Response:
 # ---- people (user management) ---------------------------------------------
 
 
+def _share_person_context(
+    *,
+    user_id: str,
+    password: str,
+    homeserver_url: str,
+    is_admin: bool,
+    reset: bool,
+    principal: str,
+) -> dict[str, Any]:
+    """Build the share-person template context with all the QRs the new
+    user needs: install (Element + Orbot per platform), and per-field
+    (server address, username, password) for scan-to-copy onboarding.
+
+    The username QR encodes the localpart only (e.g. "alice"), since
+    that's what Element's sign-in form expects after the homeserver is
+    set — encoding the full @alice:onion form would just paste a string
+    Element has to re-parse.
+    """
+    localpart = user_id.lstrip("@").split(":", 1)[0]
+    return {
+        "user_id": user_id,
+        "localpart": localpart,
+        "password": password,
+        "homeserver_url": homeserver_url,
+        "is_admin": is_admin,
+        "reset": reset,
+        "principal": principal,
+        # Per-field scan QRs.
+        "homeserver_qr": qr_png_data_url(homeserver_url),
+        "username_qr": qr_png_data_url(localpart),
+        "password_qr": qr_png_data_url(password),
+        # Install QRs (same content as on the home page).
+        "element_android_qr": qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=im.vector.app"
+        ),
+        "element_ios_qr": qr_png_data_url(
+            "https://apps.apple.com/app/element-messenger/id1083446067"
+        ),
+        "orbot_android_qr": qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=org.torproject.android"
+        ),
+        "orbot_ios_qr": qr_png_data_url(
+            "https://apps.apple.com/app/orbot/id1609461599"
+        ),
+    }
+
+
 @app.get("/people")
 async def people_list(
     request: Request,  # noqa: ARG001
@@ -651,23 +698,19 @@ async def people_add(
             principal=principal,
         )
 
-    # Render the share-with-them page with a phone-onboarding QR for the
-    # *new* user (not the admin).  Password only lives in this response;
-    # closing the page = `pureprivacy user reset-password` to recover.
-    payload = (
-        "PUREPRIVACY\n"
-        f"server: {result['homeserver_url']}\n"
-        f"user: {result['user_id']}\n"
-        f"password: {result['password']}\n"
-    )
+    # Render the share-with-them page with the full safety-card flow
+    # for the *new* user.  Password only lives in this response; closing
+    # the page = `pureprivacy user reset-password` to recover.
     return _render(
         "share_person.html",
-        user_id=result["user_id"],
-        password=result["password"],
-        homeserver_url=result["homeserver_url"],
-        is_admin=result["admin"],
-        qr_data_url=qr_png_data_url(payload),
-        principal=principal,
+        **_share_person_context(
+            user_id=result["user_id"],
+            password=result["password"],
+            homeserver_url=result["homeserver_url"],
+            is_admin=result["admin"],
+            reset=False,
+            principal=principal,
+        ),
     )
 
 
@@ -686,20 +729,16 @@ async def people_reset_password(
         raise HTTPException(500, f"Could not reset password: {exc}") from exc
     return _render(
         "share_person.html",
-        user_id=result["user_id"],
-        password=result["password"],
-        homeserver_url=(
-            f"http://{state.onion}" if state.onion else SYNAPSE_URL
+        **_share_person_context(
+            user_id=result["user_id"],
+            password=result["password"],
+            homeserver_url=(
+                f"http://{state.onion}" if state.onion else SYNAPSE_URL
+            ),
+            is_admin=False,  # we don't track admin flag through this path
+            reset=True,
+            principal=principal,
         ),
-        is_admin=False,  # we don't track admin flag through this path
-        qr_data_url=qr_png_data_url(
-            "PUREPRIVACY\n"
-            f"server: http://{state.onion}\n"
-            f"user: {result['user_id']}\n"
-            f"password: {result['password']}\n"
-        ),
-        principal=principal,
-        reset=True,
     )
 
 
