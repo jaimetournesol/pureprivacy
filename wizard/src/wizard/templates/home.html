@@ -118,6 +118,33 @@
     padding: 6px 8px;
   }
   .action-card .signin pre.copyable { padding-right: 56px; }
+  .action-card .signin .scan-toggle { margin-top: 6px; }
+  .action-card .signin .scan-toggle summary {
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+    list-style: none;
+    padding: 3px 0;
+  }
+  .action-card .signin .scan-toggle summary::-webkit-details-marker { display: none; }
+  .action-card .signin .scan-toggle summary::before {
+    content: "📷 ";
+    margin-right: 4px;
+  }
+  .action-card .signin .scan-qr {
+    background: white;
+    padding: 8px;
+    border-radius: 6px;
+    display: inline-block;
+    margin-top: 6px;
+  }
+  .action-card .signin .scan-qr img { max-width: 140px; display: block; }
+  .action-card .signin-tip {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0 0 8px;
+    line-height: 1.5;
+  }
   .action-card .footnote {
     color: var(--muted);
     font-size: 12px;
@@ -220,29 +247,40 @@
     </details>
 
     <div class="signin">
-      <div class="field"><b>Address</b><pre class="copyable">http://{{ onion }}</pre></div>
-      <div class="field"><b>Username</b><pre class="copyable">{{ admin_user }}</pre></div>
+      <p class="signin-tip">Tip &mdash; tap <b>📷 Show as QR</b> on any field
+        and scan with your phone's camera to copy that value without typing.
+        The camera shows the text and offers a Copy button.</p>
+
+      <div class="field">
+        <b>Address</b>
+        <pre class="copyable">http://{{ onion }}</pre>
+        <details class="scan-toggle">
+          <summary>Show as QR</summary>
+          <div class="scan-qr"><img src="{{ homeserver_qr }}" alt="homeserver address QR"></div>
+        </details>
+      </div>
+
+      <div class="field">
+        <b>Username</b>
+        <pre class="copyable">{{ admin_user }}</pre>
+        <details class="scan-toggle">
+          <summary>Show as QR</summary>
+          <div class="scan-qr"><img src="{{ username_qr }}" alt="username QR"></div>
+        </details>
+      </div>
+
       <div class="field">
         <b>Password</b>
         <details>
           <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
           <pre class="copyable">{{ admin_password }}</pre>
         </details>
+        <details class="scan-toggle">
+          <summary>Show as QR (also reveals)</summary>
+          <div class="scan-qr"><img src="{{ password_qr }}" alt="password QR"></div>
+        </details>
       </div>
     </div>
-
-    <details style="margin-top:14px;">
-      <summary class="muted" style="cursor:pointer;font-size:13px;padding:4px 0;">
-        Show QR code
-      </summary>
-      <div class="qr" style="margin-top:8px;"><img src="{{ qr_data_url }}" alt="homeserver-address QR"></div>
-      <p class="muted" style="font-size:12px;margin:6px 0 0;">
-        The QR is a visual copy of the address above.  Don't scan it with
-        your phone's camera &mdash; most phones can't open
-        <code>.onion</code> URLs and will drop the text into a notes app.
-        Scan from inside Element if your client offers a QR option;
-        otherwise just type or paste the address.</p>
-    </details>
 
     <p class="footnote">First time? Install
       <a href="https://element.io/download" target="_blank" rel="noopener">Element</a>

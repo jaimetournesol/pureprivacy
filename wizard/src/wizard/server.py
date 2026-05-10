@@ -200,9 +200,15 @@ def root(request: Request) -> Response:
         mcp_user=state.mcp_user,
         mcp_token=state.mcp_token,
         qr_data_url=qr_png_data_url(state.phone_payload()),
+        # Per-field QRs so the user can scan one piece at a time with
+        # their phone's camera, tap "copy", and paste into Element.
+        # Each encodes the bare value (no extra prose) — the camera's
+        # text preview shows just that field, which copies cleanly.
+        homeserver_qr=qr_png_data_url(f"http://{state.onion}") if state.onion else "",
+        username_qr=qr_png_data_url(state.admin_user or ""),
+        password_qr=qr_png_data_url(state.admin_password or ""),
         # Phone cameras open https URLs natively, so these deep-link
-        # straight into the Play Store / App Store on scan.  Generated
-        # per-request for simplicity (a few millis, ~2 KB each).
+        # straight into the Play Store / App Store on scan.
         element_android_qr=qr_png_data_url(
             "https://play.google.com/store/apps/details?id=im.vector.app"
         ),
