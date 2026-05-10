@@ -495,7 +495,8 @@
     {% if recovery_passphrase %}
     <h4>Recovery key</h4>
     <p class="muted" style="font-size:13px;">If you forget your password,
-      this resets it without wiping the box.  Write it down somewhere safe.</p>
+      this resets it without wiping the box.  Write it down somewhere safe
+      &mdash; ideally a password manager or a piece of paper in your wallet.</p>
     <div class="field">
       <b>Recovery key</b>
       <details>
@@ -503,7 +504,27 @@
         <pre class="copyable">{{ recovery_passphrase }}</pre>
       </details>
     </div>
-    <p class="muted" style="font-size:12px;">When you need it, run on the host:
+    <div class="audit-line">
+      📊 The recovery key has been visible
+      <b>{{ recovery_view_count }}</b> time{% if recovery_view_count != 1 %}s{% endif %}
+      since the last reset.
+      <form method="post" action="/reset-recovery-counter" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="link-btn">Reset counter</button>
+      </form>
+    </div>
+    <p class="audit-hint">
+      Unlike the admin password, the recovery key should rarely be
+      viewed &mdash; you write it down once and only return for an
+      actual recovery.  A growing count after first-boot is suspicious.
+    </p>
+    {% if recovery_counter_reset %}
+    <div class="alert info" style="margin-top:8px;font-size:12px;">
+      ✓ Recovery-key view counter reset to 0.
+    </div>
+    {% endif %}
+    <p class="muted" style="font-size:12px;margin-top:8px;">When you need it,
+      run on the host:
       <code>pureprivacy admin reset-password "&lt;your-recovery-key&gt;"</code></p>
     {% endif %}
 

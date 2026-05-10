@@ -115,19 +115,20 @@ def update_admin_password(shared: Path, *, new_password: str) -> None:
     sentinel.chmod(0o600)
 
 
-# Admin-password reveal counter --------------------------------------------
+# Reveal counters ----------------------------------------------------------
 #
-# Every authenticated render of the home page (which inlines the admin
-# password text) increments this counter.  The home page surfaces the
-# count so the operator can compare it to their own knowledge of how
-# many sessions they've opened — a number bigger than expected is a
-# signal that someone else viewed the setup page.
+# Every authenticated render of the home page that embeds a sensitive
+# value (admin password, recovery key) bumps the matching counter.  The
+# home page surfaces the count so the operator can compare it to their
+# own knowledge of how many sessions they've opened — a number bigger
+# than expected is a signal that another browser session has viewed the
+# setup page.  See server.py:root() for the increment sites.
 ADMIN_PASSWORD_VIEW_FILE = "admin_password_views"
+RECOVERY_KEY_VIEW_FILE = "recovery_key_views"
 
 
-def increment_admin_password_views(shared: Path) -> int:
-    """Atomically bump the reveal counter; return the post-increment value."""
-    counter = shared / SECRETS_SUBDIR / ADMIN_PASSWORD_VIEW_FILE
+def _increment_counter(shared: Path, name: str) -> int:
+    counter = shared / SECRETS_SUBDIR / name
     counter.parent.mkdir(parents=True, exist_ok=True)
     try:
         current = int(counter.read_text(encoding="utf-8").strip())
@@ -141,22 +142,45 @@ def increment_admin_password_views(shared: Path) -> int:
     return new_count
 
 
-def read_admin_password_views(shared: Path) -> int:
-    counter = shared / SECRETS_SUBDIR / ADMIN_PASSWORD_VIEW_FILE
+def _read_counter(shared: Path, name: str) -> int:
+    counter = shared / SECRETS_SUBDIR / name
     try:
         return int(counter.read_text(encoding="utf-8").strip())
     except (FileNotFoundError, ValueError):
         return 0
 
 
-def reset_admin_password_views(shared: Path) -> None:
-    """Zero the counter — operator's "I've seen it, the rest is suspicious"."""
-    counter = shared / SECRETS_SUBDIR / ADMIN_PASSWORD_VIEW_FILE
+def _reset_counter(shared: Path, name: str) -> None:
+    counter = shared / SECRETS_SUBDIR / name
     counter.parent.mkdir(parents=True, exist_ok=True)
     tmp = counter.with_suffix(".tmp")
     tmp.write_text("0", encoding="utf-8")
     tmp.chmod(0o600)
     tmp.replace(counter)
+
+
+def increment_admin_password_views(shared: Path) -> int:
+    return _increment_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def read_admin_password_views(shared: Path) -> int:
+    return _read_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def reset_admin_password_views(shared: Path) -> None:
+    _reset_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def increment_recovery_key_views(shared: Path) -> int:
+    return _increment_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def read_recovery_key_views(shared: Path) -> int:
+    return _read_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def reset_recovery_key_views(shared: Path) -> None:
+    _reset_counter(shared, RECOVERY_KEY_VIEW_FILE)
 
 
 def write_mcp_bot_credentials(

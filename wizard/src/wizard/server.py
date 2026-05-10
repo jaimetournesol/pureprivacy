@@ -36,10 +36,13 @@ from .docker_client import DockerUnavailable, default_client as docker_default_c
 from .qr import qr_png_data_url
 from .secrets import (
     increment_admin_password_views,
+    increment_recovery_key_views,
     load_setup_state,
     mark_setup_complete,
     read_admin_password_views,
+    read_recovery_key_views,
     reset_admin_password_views,
+    reset_recovery_key_views,
     update_admin_password,
     write_mcp_bot_credentials,
 )
@@ -278,11 +281,17 @@ def root(request: Request) -> Response:
     if not auth.authenticated_principal(request, SHARED_DIR):
         return RedirectResponse("/login", status_code=303)
     peers = pair.load_pairings(SHARED_DIR)
-    # Bump the audit counter — this render embeds the admin password in
-    # the rendered HTML, so it counts as a reveal even if the user never
-    # clicks "click to reveal".  The counter is shown on the page so an
-    # operator can compare it to their own session count.
+    # Bump the audit counters — every render embeds these values in the
+    # HTML, so each render counts as a reveal regardless of whether the
+    # user clicked anything.  The home page surfaces both counts so an
+    # operator can compare them to their own session count.  The
+    # recovery counter only ticks if the recovery key is actually
+    # being rendered (older boxes pre-recovery-feature have None here).
     password_view_count = increment_admin_password_views(SHARED_DIR)
+    recovery_view_count = (
+        increment_recovery_key_views(SHARED_DIR)
+        if state.recovery_passphrase else read_recovery_key_views(SHARED_DIR)
+    )
     # Flash messages from the change-password / reset-counter handlers,
     # carried via query params after the POST→redirect→GET round-trip.
     qp = request.query_params
@@ -294,9 +303,11 @@ def root(request: Request) -> Response:
         mcp_user=state.mcp_user,
         mcp_token=state.mcp_token,
         password_view_count=password_view_count,
+        recovery_view_count=recovery_view_count,
         password_changed=qp.get("password-changed") == "1",
         password_error=qp.get("password-error"),
         counter_reset=qp.get("counter-reset") == "1",
+        recovery_counter_reset=qp.get("recovery-counter-reset") == "1",
         qr_data_url=qr_png_data_url(state.phone_payload()),
         # Per-field QRs so the user can scan one piece at a time with
         # their phone's camera, tap "copy", and paste into Element.
@@ -846,6 +857,17 @@ def reset_password_counter(
     """Zero the admin-password reveal counter."""
     reset_admin_password_views(SHARED_DIR)
     return RedirectResponse("/?counter-reset=1", status_code=303)
+
+
+@app.post("/reset-recovery-counter")
+def reset_recovery_counter(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Zero the recovery-key reveal counter."""
+    reset_recovery_key_views(SHARED_DIR)
+    return RedirectResponse("/?recovery-counter-reset=1", status_code=303)
 
 
 # ---- MCP token rotation ---------------------------------------------------
