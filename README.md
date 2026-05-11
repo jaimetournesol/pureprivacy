@@ -130,7 +130,10 @@ stack back after reboot.
 
 ## Connecting your phone
 
-See **[docs/phone-setup.md](docs/phone-setup.md)** for the full walkthrough.
+See **[docs/phone-setup.md](docs/phone-setup.md)** for the full walkthrough,
+or **[docs/screencasts.md](docs/screencasts.md)** for short video captures
+of the four-step setup (admin login on web, invite a friend, admin phone
+setup, friend phone setup) recorded against the friendly-home-page UI.
 The short version: install Element (the original — recommended for v0.1),
 install Orbot (Android **or iOS**), scan the QR.
 
