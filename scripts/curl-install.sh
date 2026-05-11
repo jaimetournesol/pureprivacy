@@ -106,7 +106,11 @@ fetch_repo() {
         ref="${PUREPRIVACY_REF}"
     else
         # Latest tag wins; fall back to upstream main if there are none.
-        ref="$(git tag --sort=-creatordate | head -1 || true)"
+        # Sort by semver (-version:refname) NOT by creation date — a
+        # hotfix tag like v0.0.99 pushed later would otherwise win
+        # over a real v0.1.0.  Pre-release tags (v0.1.0-rc1) sort
+        # below their stable counterpart under version:refname.
+        ref="$(git tag --sort=-version:refname | head -1 || true)"
         if [ -z "${ref}" ]; then
             ref="origin/main"
         fi
@@ -144,7 +148,12 @@ check_docker "${OS}"
 fetch_repo
 
 hdr "Putting \`pureprivacy\` on your PATH…"
-sh "${PUREPRIVACY_DIR}/scripts/install.sh" --user
+# Execute the scripts directly so each one's `#!/usr/bin/env bash`
+# shebang fires — invoking them as `sh foo.sh` would override the
+# shebang and run under POSIX sh (dash on Debian/Ubuntu), where the
+# scripts' `[[ ... ]]`, arrays, `local`, etc. would syntax-error.
+# Cloned via git so the +x bit is preserved.
+"${PUREPRIVACY_DIR}/scripts/install.sh" --user
 
 hdr "Bringing the box up…"
 init_args=""
@@ -154,7 +163,7 @@ if [ ! -t 0 ] || [ -n "${NONINTERACTIVE:-}" ]; then
     init_args="-y"
 fi
 # shellcheck disable=SC2086
-sh "${PUREPRIVACY_DIR}/scripts/pureprivacy" init ${init_args}
+"${PUREPRIVACY_DIR}/scripts/pureprivacy" init ${init_args}
 
 ok ""
 ok "Done."
