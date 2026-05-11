@@ -188,6 +188,7 @@
       <div class="links">
         <a href="/" {% if active == "home" %}class="active"{% endif %}>Home</a>
         <a href="/people" {% if active == "people" %}class="active"{% endif %}>Friends</a>
+        <a href="/about" {% if active == "about" %}class="active"{% endif %}>About</a>
       </div>
       <form method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

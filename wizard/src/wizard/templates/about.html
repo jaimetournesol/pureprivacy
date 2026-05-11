@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% set active = "about" %}
+{% block title %}About{% endblock %}
+{% block body %}
+<style>
+  .lede {
+    font-size: 16px;
+    color: var(--fg);
+    line-height: 1.55;
+    margin: 8px 0 24px;
+  }
+  .lede em { color: var(--accent); font-style: normal; font-weight: 600; }
+  .diagram {
+    margin: 8px 0 28px;
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; max-width: 100%; height: auto; min-width: 540px; }
+  .pillars { gap: 24px; }
+  .pillars h3 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .pillars h3.warn { color: var(--danger); }
+  .pillars ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .pillars li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .pillars li:last-child { border-bottom: none; }
+  .pillars li b { color: var(--fg); display: block; margin-bottom: 2px; }
+  .pillars li span { color: var(--muted); }
+  .footnote {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 24px;
+  }
+</style>
+
+<h2>How PurePrivacy works</h2>
+
+<p class="lede">
+  This box is <em>your own</em> private messaging server. Your phone, any
+  peer you pair with, and your AI agent all reach it through Tor or
+  loopback &mdash; there is no public DNS record, no port forwarding, no
+  third-party server holding your messages.
+</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 720 440" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="PurePrivacy architecture: external clients reach the box through Tor; the AI agent connects via loopback; Synapse stores end-to-end encrypted message ciphertext.">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#9ba0aa"/>
+      </marker>
+      <marker id="ah-tor" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#7eebab"/>
+      </marker>
+      <marker id="ah-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#58c0ff"/>
+      </marker>
+    </defs>
+
+    <!-- "Your hardware" boundary -->
+    <rect x="240" y="40" width="440" height="340" rx="14"
+          fill="rgba(88,192,255,0.04)" stroke="#58c0ff" stroke-width="1.4"
+          stroke-dasharray="6 4"/>
+    <text x="258" y="62" fill="#58c0ff" font-size="11" font-weight="700"
+          letter-spacing="0.12em">YOUR HARDWARE</text>
+
+    <!-- Tor onion ingress -->
+    <rect x="265" y="100" width="135" height="56" rx="10"
+          fill="#16181d" stroke="#7eebab" stroke-width="1.5"/>
+    <text x="332" y="124" fill="#7eebab" font-size="13" font-weight="600"
+          text-anchor="middle">Tor hidden service</text>
+    <text x="332" y="142" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      .onion address
+    </text>
+
+    <!-- Synapse -->
+    <rect x="440" y="90" width="200" height="100" rx="10"
+          fill="#16181d" stroke="#2a2d34" stroke-width="1.5"/>
+    <text x="540" y="118" fill="#e8e8ea" font-size="14" font-weight="600"
+          text-anchor="middle">Synapse</text>
+    <text x="540" y="136" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      Matrix homeserver
+    </text>
+    <!-- E2E badge -->
+    <g transform="translate(478, 152)">
+      <rect width="124" height="22" rx="11" fill="rgba(126,235,171,0.10)"
+            stroke="#7eebab" stroke-width="1"/>
+      <text x="62" y="15" fill="#7eebab" font-size="11" font-weight="600"
+            text-anchor="middle">stores ciphertext only</text>
+    </g>
+
+    <!-- Postgres -->
+    <rect x="460" y="208" width="160" height="36" rx="8"
+          fill="#0e0f12" stroke="#2a2d34" stroke-width="1"/>
+    <text x="540" y="225" fill="#e8e8ea" font-size="12" text-anchor="middle"
+          font-weight="500">Postgres</text>
+    <text x="540" y="238" fill="#9ba0aa" font-size="10" text-anchor="middle">
+      encrypted message blobs
+    </text>
+
+    <!-- MCP server -->
+    <rect x="265" y="265" width="200" height="80" rx="10"
+          fill="#16181d" stroke="#2a2d34" stroke-width="1.5"/>
+    <text x="365" y="291" fill="#e8e8ea" font-size="14" font-weight="600"
+          text-anchor="middle">MCP server</text>
+    <text x="365" y="309" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      bot user logs in to Synapse
+    </text>
+    <text x="365" y="325" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      Olm/Megolm keys live here
+    </text>
+
+    <!-- External: phone -->
+    <rect x="30" y="56" width="170" height="70" rx="10"
+          fill="#0e0f12" stroke="#2a2d34" stroke-width="1.2"/>
+    <text x="115" y="82" fill="#e8e8ea" font-size="14" font-weight="600"
+          text-anchor="middle">Phone</text>
+    <text x="115" y="100" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      Element + Orbot
+    </text>
+    <text x="115" y="115" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      (or any Matrix client)
+    </text>
+
+    <!-- External: paired peer -->
+    <rect x="30" y="156" width="170" height="70" rx="10"
+          fill="#0e0f12" stroke="#2a2d34" stroke-width="1.2"/>
+    <text x="115" y="182" fill="#e8e8ea" font-size="14" font-weight="600"
+          text-anchor="middle">Paired peer</text>
+    <text x="115" y="200" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      Another PurePrivacy box
+    </text>
+    <text x="115" y="215" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      (federation, allowlist only)
+    </text>
+
+    <!-- External: AI agent -->
+    <rect x="30" y="270" width="170" height="70" rx="10"
+          fill="#0e0f12" stroke="#2a2d34" stroke-width="1.2"/>
+    <text x="115" y="296" fill="#e8e8ea" font-size="14" font-weight="600"
+          text-anchor="middle">AI agent</text>
+    <text x="115" y="314" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      Claude Code, Cursor, &hellip;
+    </text>
+    <text x="115" y="329" fill="#9ba0aa" font-size="11" text-anchor="middle">
+      runs on this same box
+    </text>
+
+    <!-- Edges -->
+    <!-- phone → onion (Tor) -->
+    <path d="M 200 91 C 232 91, 232 122, 265 122" fill="none"
+          stroke="#7eebab" stroke-width="1.7" marker-end="url(#ah-tor)"/>
+    <!-- peer → onion (Tor) -->
+    <path d="M 200 191 C 232 191, 232 138, 265 138" fill="none"
+          stroke="#7eebab" stroke-width="1.7" marker-end="url(#ah-tor)"/>
+    <!-- agent → MCP (loopback) -->
+    <path d="M 200 305 L 265 305" fill="none"
+          stroke="#58c0ff" stroke-width="1.7" marker-end="url(#ah-loop)"/>
+    <!-- onion → synapse -->
+    <path d="M 400 130 L 440 130" fill="none"
+          stroke="#9ba0aa" stroke-width="1.4" marker-end="url(#ah)"/>
+    <!-- synapse → postgres -->
+    <path d="M 540 190 L 540 208" fill="none"
+          stroke="#9ba0aa" stroke-width="1.4" marker-end="url(#ah)"/>
+    <!-- mcp ↔ synapse (bot uses client API) -->
+    <path d="M 465 290 C 510 290, 540 230, 540 195" fill="none"
+          stroke="#9ba0aa" stroke-width="1.3" stroke-dasharray="3 4"
+          marker-end="url(#ah)"/>
+
+    <!-- Legend -->
+    <g transform="translate(30, 392)" font-size="11" fill="#9ba0aa">
+      <line x1="0" y1="6" x2="22" y2="6" stroke="#7eebab" stroke-width="1.7"/>
+      <text x="28" y="10">Onion-routed (Tor)</text>
+      <line x1="170" y1="6" x2="192" y2="6" stroke="#58c0ff" stroke-width="1.7"/>
+      <text x="198" y="10">Local loopback</text>
+      <line x1="320" y1="6" x2="342" y2="6" stroke="#9ba0aa" stroke-width="1.3" stroke-dasharray="3 4"/>
+      <text x="348" y="10">Internal docker network</text>
+    </g>
+  </svg>
+</div>
+
+<div class="row pillars">
+  <div>
+    <h3>What you get</h3>
+    <ul>
+      <li>
+        <b>Tor-only by design</b>
+        <span>No domain, no certs, no port forwarding. Reachable from
+          anywhere with internet, even behind CGNAT.</span>
+      </li>
+      <li>
+        <b>End-to-end encrypted</b>
+        <span>Olm/Megolm seals every message before it touches Synapse.
+          Even root on this box can't read room contents without your
+          client's keys.</span>
+      </li>
+      <li>
+        <b>Federation is allowlist-only</b>
+        <span>You only talk to peers you've explicitly paired with.
+          No global directory, no random invites.</span>
+      </li>
+      <li>
+        <b>Agent-ready</b>
+        <span>The MCP server lets your AI assistant triage, search, and
+          reply through a bot user &mdash; without anything ever leaving
+          this hardware.</span>
+      </li>
+      <li>
+        <b>Survives reboots</b>
+        <span>It's an appliance: install once, the stack auto-restarts
+          and the wizard remembers what's set up.</span>
+      </li>
+    </ul>
+  </div>
+
+  <div>
+    <h3 class="warn">What it can't do</h3>
+    <ul>
+      <li>
+        <b>Trusted host</b>
+        <span>If someone gets root on this machine, they have your
+          ciphertext database, the bot's Olm key store, and the recovery
+          hash. Disk encryption is your responsibility.</span>
+      </li>
+      <li>
+        <b>Tor latency</b>
+        <span>Messages add ~1&thinsp;s on top of normal delivery. Voice
+          calls work but ride your guard relay's bandwidth.</span>
+      </li>
+      <li>
+        <b>Phone setup is three steps</b>
+        <span>Element, Orbot, scan a QR. It's not Signal-tier UX yet.
+          Apple's iOS makes Tor harder than Android.</span>
+      </li>
+      <li>
+        <b>Trust is your eyeballs</b>
+        <span>Pair codes are verified out-of-band by the operator
+          reading the QR off two devices they control. There is no PKI
+          shortcut.</span>
+      </li>
+      <li>
+        <b>Keep the recovery passphrase</b>
+        <span>If you lose both your admin password <em>and</em> the
+          recovery passphrase, the only way back in is wiping the box
+          and starting over.</span>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<hr>
+
+<p class="footnote">
+  The deeper architecture &mdash; Tor configuration, federation pair
+  codes, the MCP token grace window, the threat model &mdash; lives in
+  <code>docs/architecture.md</code> in the project repository.
+  Everything you can act on from here (people, federation, token
+  rotation, recovery) is on the other tabs.
+</p>
+{% endblock %}

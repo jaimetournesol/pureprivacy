@@ -763,6 +763,14 @@ async def people_remove(
 # ---- pairing ---------------------------------------------------------------
 
 
+@app.get("/about")
+def about_view(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),
+) -> Response:
+    return _render("about.html", principal=principal)
+
+
 @app.get("/pair")
 def pair_view(
     request: Request,  # noqa: ARG001
