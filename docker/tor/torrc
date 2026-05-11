@@ -68,6 +68,12 @@ HiddenServicePort 49191 172.30.0.11:49191
 HiddenServicePort 7880  172.30.0.12:7880
 HiddenServicePort 7881  172.30.0.12:7881
 HiddenServicePort 8082  172.30.0.14:8080
+# WSS-terminated path to LiveKit through synapse-fed-proxy.  Element
+# Call won't accept ws:// for SFU connections, so fed-proxy terminates
+# TLS with the onion self-signed cert and reverse-proxies the WS
+# upgrade to livekit:7880.  Phones connect to wss://${ONION}:7443
+# (URL handed out by lk-jwt's JWT after the override in its entrypoint).
+HiddenServicePort 7443  172.30.0.13:7443
 
 Log notice stdout
 SafeLogging 1

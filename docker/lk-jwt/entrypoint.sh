@@ -59,5 +59,22 @@ if [ -n "${ONION}" ]; then
     fi
 fi
 
-# 3. LIVEKIT_URL and LK_JWT_PORT come from compose env.
+# 3. Rewrite LIVEKIT_URL to point at the WSS-terminated path through
+#    synapse-fed-proxy.  Phones running Element Call refuse plain ws://
+#    (WebRTC enforces secure-context semantics for the SFU connection),
+#    so we hand them wss://${ONION}:7443.  fed-proxy terminates TLS with
+#    the same self-signed onion cert that already covers the Synapse
+#    matrix:// path, then reverse-proxies the WS upgrade to livekit:7880.
+#    Tor maps ${ONION}:7443 → fed-proxy per the torrc.
+#
+#    Only override if compose handed us the default docker-internal form;
+#    leaving anything else alone lets an operator point at an external
+#    livekit by setting LIVEKIT_URL in .env without losing it here.
+if [ -n "${ONION}" ] && [ "${LIVEKIT_URL:-}" = "ws://livekit:7880" ]; then
+    LIVEKIT_URL="wss://${ONION}:7443"
+    export LIVEKIT_URL
+    echo "lk-jwt: rewrote LIVEKIT_URL to ${LIVEKIT_URL} for external clients"
+fi
+
+# 4. LIVEKIT_URL (now external-friendly) and LK_JWT_PORT come from env.
 exec /lk-jwt-service
