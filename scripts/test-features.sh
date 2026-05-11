@@ -269,8 +269,10 @@ PEOPLE_UNAUTH="$(curl -s -o /dev/null -w '%{http_code}' \
 step "wizard /people: GET with CLI token renders user list"
 PEOPLE_HTML="$(curl -fsS http://127.0.0.1:8088/people \
     -H "X-PurePrivacy-CLI-Token: ${CLI_TOKEN}")"
+# Heading renamed "People" → "Friends" in docs-demo-videos; accept either.
 [[ "${PEOPLE_HTML}" == *"People on this box"* ]] \
-    || fail "/people did not render the people page"
+    || [[ "${PEOPLE_HTML}" == *"Friends on this box"* ]] \
+    || fail "/people did not render the people/friends page"
 [[ "${PEOPLE_HTML}" == *"pureprivacy-mcp"* ]] \
     || fail "/people did not list the MCP bot"
 green "  /people GET works with CLI token"

@@ -42,7 +42,6 @@ from .secrets import (
     load_setup_state,
     mark_first_login_done,
     mark_setup_complete,
-    read_admin_password_views,
     read_recovery_key_views,
     reset_admin_password_views,
     reset_recovery_key_views,
