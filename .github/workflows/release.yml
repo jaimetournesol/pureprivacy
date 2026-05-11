@@ -15,12 +15,16 @@ jobs:
     strategy:
       matrix:
         component:
-          - { name: init,    context: docker/init }
-          - { name: tor,     context: docker/tor }
-          - { name: synapse, context: docker/synapse }
-          - { name: coturn,  context: docker/coturn }
-          - { name: wizard,  context: wizard }
-          - { name: mcp,     context: mcp-server }
+          - { name: init,              context: docker/init }
+          - { name: tor,               context: docker/tor }
+          - { name: privoxy,           context: docker/privoxy }
+          - { name: synapse,           context: docker/synapse }
+          - { name: coturn,            context: docker/coturn }
+          - { name: wizard,            context: wizard }
+          - { name: mcp,               context: mcp-server }
+          - { name: livekit,           context: docker/livekit }
+          - { name: lk-jwt,            context: docker/lk-jwt }
+          - { name: synapse-fed-proxy, context: docker/synapse-fed-proxy }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
