@@ -35,8 +35,18 @@ from . import recovery
 from .docker_client import DockerUnavailable, default_client as docker_default_client
 from .qr import qr_png_data_url
 from .secrets import (
+    increment_admin_password_views,
+    increment_login_auto_password_views,
+    increment_recovery_key_views,
+    is_first_login_pending,
     load_setup_state,
+    mark_first_login_done,
     mark_setup_complete,
+    read_admin_password_views,
+    read_recovery_key_views,
+    reset_admin_password_views,
+    reset_recovery_key_views,
+    update_admin_password,
     write_mcp_bot_credentials,
 )
 from .synapse import SynapseAdminClient, random_password
@@ -171,6 +181,88 @@ def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _humanize_age_ms(ms: int) -> str:
+    """Convert an age-in-ms to a friendly relative string."""
+    if ms < 0:
+        ms = 0
+    s = ms // 1000
+    if s < 5:
+        return "just now"
+    if s < 60:
+        return f"{s}s ago"
+    m = s // 60
+    if m < 60:
+        return f"{m}m ago"
+    h = m // 60
+    if h < 24:
+        return f"{h}h ago"
+    d = h // 24
+    return f"{d}d ago"
+
+
+@app.get("/api/setup-status")
+async def setup_status(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+) -> JSONResponse:
+    """JSON snapshot of setup state for the live status panel on /.
+
+    Polled from the home page every few seconds.  Returns the onion
+    address plus the admin's logged-in devices, with the wizard's own
+    backend session filtered out so only real phones show up.
+    """
+    state = load_setup_state(SHARED_DIR)
+    payload: dict[str, Any] = {
+        "onion": state.onion or "",
+        "devices": [],
+        "error": None,
+    }
+    if not state.complete:
+        payload["error"] = "setup-not-complete"
+        return JSONResponse(payload)
+
+    try:
+        client, token = await admin_cli.admin_session(state)
+        try:
+            r = await client.get(
+                f"{SYNAPSE_URL}/_matrix/client/v3/devices",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5.0,
+            )
+            if r.status_code != 200:
+                payload["error"] = f"synapse {r.status_code}"
+                return JSONResponse(payload)
+            now_ms = int(time.time() * 1000)
+            raw = r.json().get("devices", [])
+            devices: list[dict[str, Any]] = []
+            for d in raw:
+                # Two filters:
+                #  1. Tagged backend session — wizard's own admin login,
+                #     not a phone.
+                #  2. Anonymous sessions (display_name is null/empty)
+                #     are nearly always CLI/admin tooling.  Real Matrix
+                #     clients (Element, Cinny, FluffyChat, etc.) set a
+                #     display_name on login, so requiring one cleanly
+                #     hides the leftover backend devices that predate
+                #     the tagging change.
+                name = d.get("display_name")
+                if not name or name == admin_cli.ADMIN_BACKEND_DEVICE_NAME:
+                    continue
+                last_seen = d.get("last_seen_ts") or 0
+                devices.append({
+                    "device_id": (d.get("device_id") or "")[:8],
+                    "display_name": name,
+                    "last_seen_relative": _humanize_age_ms(now_ms - last_seen) if last_seen else "never",
+                })
+            payload["devices"] = devices
+        finally:
+            await client.aclose()
+    except Exception:  # noqa: BLE001
+        log.exception("setup-status: failed to fetch devices")
+        payload["error"] = "fetch-failed"
+    return JSONResponse(payload)
+
+
 # ---- root: pre-setup form, or post-login dashboard ------------------------
 
 
@@ -192,14 +284,58 @@ def root(request: Request) -> Response:
     if not auth.authenticated_principal(request, SHARED_DIR):
         return RedirectResponse("/login", status_code=303)
     peers = pair.load_pairings(SHARED_DIR)
+    # Bump the audit counters — every render embeds these values in the
+    # HTML, so each render counts as a reveal regardless of whether the
+    # user clicked anything.  The home page surfaces both counts so an
+    # operator can compare them to their own session count.  The
+    # recovery counter only ticks if the recovery key is actually
+    # being rendered (older boxes pre-recovery-feature have None here).
+    password_view_count = increment_admin_password_views(SHARED_DIR)
+    recovery_view_count = (
+        increment_recovery_key_views(SHARED_DIR)
+        if state.recovery_passphrase else read_recovery_key_views(SHARED_DIR)
+    )
+    # Flash messages from the change-password / reset-counter handlers,
+    # carried via query params after the POST→redirect→GET round-trip.
+    qp = request.query_params
     return _render(
-        "done.html",
+        "home.html",
         onion=state.onion,
         admin_user=state.admin_user,
         admin_password=state.admin_password,
         mcp_user=state.mcp_user,
         mcp_token=state.mcp_token,
+        password_view_count=password_view_count,
+        recovery_view_count=recovery_view_count,
+        password_changed=qp.get("password-changed") == "1",
+        password_error=qp.get("password-error"),
+        counter_reset=qp.get("counter-reset") == "1",
+        recovery_counter_reset=qp.get("recovery-counter-reset") == "1",
         qr_data_url=qr_png_data_url(state.phone_payload()),
+        # Per-field QRs so the user can scan one piece at a time with
+        # their phone's camera, tap "copy", and paste into Element.
+        # Each encodes the bare value (no extra prose) — the camera's
+        # text preview shows just that field, which copies cleanly.
+        homeserver_qr=qr_png_data_url(f"http://{state.onion}") if state.onion else "",
+        username_qr=qr_png_data_url(state.admin_user or ""),
+        password_qr=qr_png_data_url(state.admin_password or ""),
+        # Phone cameras open https URLs natively, so these deep-link
+        # straight into the Play Store / App Store on scan.  Element is
+        # the messaging client (classic, not Element X); Orbot is the
+        # Tor VPN that lets Element reach .onion addresses.  All four
+        # are needed for the average user; we surface all four QRs.
+        element_android_qr=qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=im.vector.app"
+        ),
+        element_ios_qr=qr_png_data_url(
+            "https://apps.apple.com/app/element-messenger/id1083446067"
+        ),
+        orbot_android_qr=qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=org.torproject.android"
+        ),
+        orbot_ios_qr=qr_png_data_url(
+            "https://apps.apple.com/app/orbot/id1609461599"
+        ),
         peers=peers,
         mcp_grace_remaining_s=state.mcp_grace_remaining_s,
         recovery_passphrase=state.recovery_passphrase,
@@ -335,7 +471,29 @@ def login_form(request: Request) -> Response:
         return RedirectResponse("/", status_code=303)
     if auth.authenticated_principal(request, SHARED_DIR):
         return RedirectResponse("/", status_code=303)
-    return _render("login.html", admin_user=state.admin_user, error=None)
+    # First-ever-login affordance: show the auto-generated password
+    # directly on this page only.  Cleared after the first successful
+    # POST /login below; operators who used `pureprivacy init` from the
+    # CLI never went through web /setup so the password isn't yet in
+    # their browser anywhere — without this they'd have to chase it
+    # down via `pureprivacy info --secrets` on the host.
+    auto_password = (
+        state.admin_password if is_first_login_pending(SHARED_DIR) else None
+    )
+    # Tamper-detection counter: every render that exposes the auto
+    # password ticks up.  An operator opening this page for the first
+    # time should expect "1"; anything higher means another browser
+    # session reached this screen first.
+    auto_password_view_count = (
+        increment_login_auto_password_views(SHARED_DIR) if auto_password else 0
+    )
+    return _render(
+        "login.html",
+        admin_user=state.admin_user,
+        error=None,
+        auto_password=auto_password,
+        auto_password_view_count=auto_password_view_count,
+    )
 
 
 # Per-IP login rate limiter.  In-memory deque of attempt timestamps,
@@ -395,6 +553,9 @@ def login_submit(
         response,
         auth.issue_cookie(SHARED_DIR, admin_user=state.admin_user or "admin"),
     )
+    # Retire the first-login affordance: subsequent /login renders
+    # won't surface the auto-generated password anymore.
+    mark_first_login_done(SHARED_DIR)
     return response
 
 
@@ -406,6 +567,53 @@ def logout(_csrf: None = Depends(_csrf_protect)) -> Response:
 
 
 # ---- people (user management) ---------------------------------------------
+
+
+def _share_person_context(
+    *,
+    user_id: str,
+    password: str,
+    homeserver_url: str,
+    is_admin: bool,
+    reset: bool,
+    principal: str,
+) -> dict[str, Any]:
+    """Build the share-person template context with all the QRs the new
+    user needs: install (Element + Orbot per platform), and per-field
+    (server address, username, password) for scan-to-copy onboarding.
+
+    The username QR encodes the localpart only (e.g. "alice"), since
+    that's what Element's sign-in form expects after the homeserver is
+    set — encoding the full @alice:onion form would just paste a string
+    Element has to re-parse.
+    """
+    localpart = user_id.lstrip("@").split(":", 1)[0]
+    return {
+        "user_id": user_id,
+        "localpart": localpart,
+        "password": password,
+        "homeserver_url": homeserver_url,
+        "is_admin": is_admin,
+        "reset": reset,
+        "principal": principal,
+        # Per-field scan QRs.
+        "homeserver_qr": qr_png_data_url(homeserver_url),
+        "username_qr": qr_png_data_url(localpart),
+        "password_qr": qr_png_data_url(password),
+        # Install QRs (same content as on the home page).
+        "element_android_qr": qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=im.vector.app"
+        ),
+        "element_ios_qr": qr_png_data_url(
+            "https://apps.apple.com/app/element-messenger/id1083446067"
+        ),
+        "orbot_android_qr": qr_png_data_url(
+            "https://play.google.com/store/apps/details?id=org.torproject.android"
+        ),
+        "orbot_ios_qr": qr_png_data_url(
+            "https://apps.apple.com/app/orbot/id1609461599"
+        ),
+    }
 
 
 @app.get("/people")
@@ -490,23 +698,19 @@ async def people_add(
             principal=principal,
         )
 
-    # Render the share-with-them page with a phone-onboarding QR for the
-    # *new* user (not the admin).  Password only lives in this response;
-    # closing the page = `pureprivacy user reset-password` to recover.
-    payload = (
-        "PUREPRIVACY\n"
-        f"server: {result['homeserver_url']}\n"
-        f"user: {result['user_id']}\n"
-        f"password: {result['password']}\n"
-    )
+    # Render the share-with-them page with the full safety-card flow
+    # for the *new* user.  Password only lives in this response; closing
+    # the page = `pureprivacy user reset-password` to recover.
     return _render(
         "share_person.html",
-        user_id=result["user_id"],
-        password=result["password"],
-        homeserver_url=result["homeserver_url"],
-        is_admin=result["admin"],
-        qr_data_url=qr_png_data_url(payload),
-        principal=principal,
+        **_share_person_context(
+            user_id=result["user_id"],
+            password=result["password"],
+            homeserver_url=result["homeserver_url"],
+            is_admin=result["admin"],
+            reset=False,
+            principal=principal,
+        ),
     )
 
 
@@ -525,20 +729,16 @@ async def people_reset_password(
         raise HTTPException(500, f"Could not reset password: {exc}") from exc
     return _render(
         "share_person.html",
-        user_id=result["user_id"],
-        password=result["password"],
-        homeserver_url=(
-            f"http://{state.onion}" if state.onion else SYNAPSE_URL
+        **_share_person_context(
+            user_id=result["user_id"],
+            password=result["password"],
+            homeserver_url=(
+                f"http://{state.onion}" if state.onion else SYNAPSE_URL
+            ),
+            is_admin=False,  # we don't track admin flag through this path
+            reset=True,
+            principal=principal,
         ),
-        is_admin=False,  # we don't track admin flag through this path
-        qr_data_url=qr_png_data_url(
-            "PUREPRIVACY\n"
-            f"server: http://{state.onion}\n"
-            f"user: {result['user_id']}\n"
-            f"password: {result['password']}\n"
-        ),
-        principal=principal,
-        reset=True,
     )
 
 
@@ -670,6 +870,71 @@ async def pair_remove(
     await _apply_federation_change(reason=f"remove {onion}")
     log.info("federation closed for %s", onion)
     return RedirectResponse("/pair", status_code=303)
+
+
+# ---- Admin password (change + counter reset) -----------------------------
+
+
+@app.post("/change-admin-password")
+async def change_admin_password(
+    request: Request,  # noqa: ARG001
+    new_password: str = Form(...),
+    new_password_confirm: str = Form(...),
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Operator-initiated admin password change.
+
+    Calls Synapse's admin reset_password endpoint (same path used by
+    `pureprivacy admin reset-password`) and updates `.setup-complete` so
+    `pureprivacy info --secrets` reports the new value.  Synapse's
+    reset endpoint logs out every other device on the admin account,
+    so any phone signed in with the old password will need to re-sign-in.
+    """
+    state = load_setup_state(SHARED_DIR)
+    if not state.complete or not state.admin_user:
+        return RedirectResponse("/?password-error=not-setup", status_code=303)
+    if not new_password or len(new_password) < 12:
+        return RedirectResponse("/?password-error=too-short", status_code=303)
+    if new_password != new_password_confirm:
+        return RedirectResponse("/?password-error=mismatch", status_code=303)
+    try:
+        # Reuse the admin_cli helper that owns the Synapse-side reset
+        # path, then update the local sentinel atomically.
+        localpart = state.admin_user.lstrip("@").split(":", 1)[0]
+        await admin_cli.reset_user_password(
+            state, name=localpart, password=new_password
+        )
+        update_admin_password(SHARED_DIR, new_password=new_password)
+        # Reset the audit counter — the operator just rotated; any
+        # subsequent views are post-rotation and worth tracking fresh.
+        reset_admin_password_views(SHARED_DIR)
+    except Exception:  # noqa: BLE001
+        log.exception("admin password change failed")
+        return RedirectResponse("/?password-error=server", status_code=303)
+    return RedirectResponse("/?password-changed=1", status_code=303)
+
+
+@app.post("/reset-password-counter")
+def reset_password_counter(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Zero the admin-password reveal counter."""
+    reset_admin_password_views(SHARED_DIR)
+    return RedirectResponse("/?counter-reset=1", status_code=303)
+
+
+@app.post("/reset-recovery-counter")
+def reset_recovery_counter(
+    request: Request,  # noqa: ARG001
+    principal: str = Depends(require_session),  # noqa: ARG001
+    _csrf: None = Depends(_csrf_protect),
+) -> Response:
+    """Zero the recovery-key reveal counter."""
+    reset_recovery_key_views(SHARED_DIR)
+    return RedirectResponse("/?recovery-counter-reset=1", status_code=303)
 
 
 # ---- MCP token rotation ---------------------------------------------------

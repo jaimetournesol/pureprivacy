@@ -33,6 +33,11 @@ from .synapse import SynapseAdminClient, random_password
 SHARED_DIR = Path(os.environ.get("SHARED_DIR", "/shared"))
 SYNAPSE_URL = os.environ.get("SYNAPSE_URL", "http://synapse:8008")
 
+# Synapse device display_name we attach to admin's backend session so
+# the wizard's status panel can hide it from the operator-visible
+# device list.  See setup_status() in server.py.
+ADMIN_BACKEND_DEVICE_NAME = "PurePrivacy server backend"
+
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -101,6 +106,11 @@ async def _admin_login(
         "type": "m.login.password",
         "identifier": {"type": "m.id.user", "user": localpart},
         "password": admin_password,
+        # Tag the device so the wizard's own status panel can filter it
+        # out of the "your phones" list — without this the operator sees
+        # a phantom "device" that's actually just the wizard talking to
+        # Synapse on their behalf.
+        "initial_device_display_name": ADMIN_BACKEND_DEVICE_NAME,
     }
     r = await client.post(f"{SYNAPSE_URL}/_matrix/client/r0/login", json=body)
     r.raise_for_status()

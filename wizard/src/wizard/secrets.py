@@ -115,6 +115,107 @@ def update_admin_password(shared: Path, *, new_password: str) -> None:
     sentinel.chmod(0o600)
 
 
+# Reveal counters ----------------------------------------------------------
+#
+# Every authenticated render of the home page that embeds a sensitive
+# value (admin password, recovery key) bumps the matching counter.  The
+# home page surfaces the count so the operator can compare it to their
+# own knowledge of how many sessions they've opened — a number bigger
+# than expected is a signal that another browser session has viewed the
+# setup page.  See server.py:root() for the increment sites.
+ADMIN_PASSWORD_VIEW_FILE = "admin_password_views"
+RECOVERY_KEY_VIEW_FILE = "recovery_key_views"
+LOGIN_AUTO_PASSWORD_VIEW_FILE = "login_auto_password_views"
+
+
+def _increment_counter(shared: Path, name: str) -> int:
+    counter = shared / SECRETS_SUBDIR / name
+    counter.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current = int(counter.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        current = 0
+    new_count = current + 1
+    tmp = counter.with_suffix(".tmp")
+    tmp.write_text(str(new_count), encoding="utf-8")
+    tmp.chmod(0o600)
+    tmp.replace(counter)
+    return new_count
+
+
+def _read_counter(shared: Path, name: str) -> int:
+    counter = shared / SECRETS_SUBDIR / name
+    try:
+        return int(counter.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def _reset_counter(shared: Path, name: str) -> None:
+    counter = shared / SECRETS_SUBDIR / name
+    counter.parent.mkdir(parents=True, exist_ok=True)
+    tmp = counter.with_suffix(".tmp")
+    tmp.write_text("0", encoding="utf-8")
+    tmp.chmod(0o600)
+    tmp.replace(counter)
+
+
+def increment_admin_password_views(shared: Path) -> int:
+    return _increment_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def read_admin_password_views(shared: Path) -> int:
+    return _read_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def reset_admin_password_views(shared: Path) -> None:
+    _reset_counter(shared, ADMIN_PASSWORD_VIEW_FILE)
+
+
+def increment_recovery_key_views(shared: Path) -> int:
+    return _increment_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def read_recovery_key_views(shared: Path) -> int:
+    return _read_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def reset_recovery_key_views(shared: Path) -> None:
+    _reset_counter(shared, RECOVERY_KEY_VIEW_FILE)
+
+
+def increment_login_auto_password_views(shared: Path) -> int:
+    """Bump the counter every time the unauthenticated login page renders
+    the auto-generated admin password (i.e. first-login is still pending).
+    Surfaced in login.html so an operator about to sign in for the first
+    time can see whether the screen was viewed before they got there."""
+    return _increment_counter(shared, LOGIN_AUTO_PASSWORD_VIEW_FILE)
+
+
+def read_login_auto_password_views(shared: Path) -> int:
+    return _read_counter(shared, LOGIN_AUTO_PASSWORD_VIEW_FILE)
+
+
+# First-login sentinel ------------------------------------------------------
+#
+# Tracks whether anyone has ever successfully completed POST /login on
+# this box.  Until they have, the login page surfaces the auto-generated
+# admin password directly so an operator who installed via CLI init can
+# get past the chicken-and-egg of "to log in I need the password, to see
+# the password I need to log in".  Cleared after first successful login.
+FIRST_LOGIN_DONE_SENTINEL = ".first-login-done"
+
+
+def is_first_login_pending(shared: Path) -> bool:
+    return not (shared / FIRST_LOGIN_DONE_SENTINEL).is_file()
+
+
+def mark_first_login_done(shared: Path) -> None:
+    sentinel = shared / FIRST_LOGIN_DONE_SENTINEL
+    sentinel.write_text("done\n", encoding="utf-8")
+    sentinel.chmod(0o600)
+
+
 def write_mcp_bot_credentials(
     shared: Path,
     *,

@@ -1,0 +1,640 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+{% block title %}Welcome{% endblock %}
+{% block body %}
+
+<style>
+  /* ---- Hero ------------------------------------------------------- */
+  .welcome-hero {
+    text-align: center;
+    padding: 2px 0 18px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .welcome-hero h2 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .welcome-hero p {
+    color: var(--muted);
+    margin: 0;
+    font-size: 14px;
+  }
+
+  /* ---- Live status panel ------------------------------------------ */
+  .status-panel {
+    background:
+      radial-gradient(circle at 0% 0%, rgba(126,235,171,0.08), transparent 60%),
+      var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .status-panel h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  .status-panel ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .status-panel li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 0;
+    color: var(--fg);
+  }
+  .status-panel li .dot {
+    color: var(--ok);
+    flex: none;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .status-panel li.waiting .dot { color: var(--muted); }
+  .status-panel li.error    .dot { color: var(--danger); }
+  .status-panel li code {
+    color: var(--muted);
+    font-size: 12px;
+    border: none;
+    background: transparent;
+    padding: 0;
+  }
+  .status-panel .device {
+    margin-left: 18px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .status-panel .device b { color: var(--fg); font-weight: 500; }
+  .status-panel .device .age { color: var(--muted); }
+
+  /* ---- Safety-card setup steps ------------------------------------ */
+  .step {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    column-gap: 16px;
+    align-items: start;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step:first-of-type { padding-top: 8px; }
+  .step:last-of-type { border-bottom: none; padding-bottom: 4px; }
+  .step-num {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 700;
+    font-size: 17px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .step-body { min-width: 0; }
+  .step-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--fg);
+    margin: 4px 0 4px;
+    letter-spacing: -0.005em;
+  }
+  .step-detail {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin: 0 0 10px;
+  }
+  .step-detail b { color: var(--fg); font-weight: 600; }
+  .step-detail em { color: var(--fg); font-style: normal; font-weight: 600; }
+
+  /* ---- Install QR grid (step 1) ------------------------------------ */
+  .install-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin: 8px 0 0;
+  }
+  @media (min-width: 540px) { .install-grid { grid-template-columns: repeat(4, 1fr); } }
+  .install-cell {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .install-cell .platform {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 6px;
+    line-height: 1.2;
+  }
+  .install-cell .qr-mini {
+    background: white;
+    padding: 6px;
+    border-radius: 5px;
+    display: inline-block;
+  }
+  .install-cell .qr-mini img { max-width: 96px; display: block; }
+  .install-cell .label {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 4px 0 0;
+  }
+  .install-warn {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .install-warn b { color: var(--fg); font-weight: 600; }
+
+  /* ---- Sign-in fields (steps 3 & 4) ------------------------------- */
+  .signin-field {
+    margin: 8px 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .signin-field b {
+    display: block;
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 11px;
+    margin: 0 0 5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .signin-field pre {
+    font-size: 13px;
+    padding: 6px 8px;
+    margin: 0;
+  }
+  .signin-field pre.copyable { padding-right: 56px; }
+  .signin-field .scan-toggle { margin-top: 6px; }
+  .signin-field .scan-toggle summary {
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+    list-style: none;
+    padding: 3px 0;
+  }
+  .signin-field .scan-toggle summary::-webkit-details-marker { display: none; }
+  .signin-field .scan-toggle summary::before { content: "📷  "; }
+  .signin-field .scan-qr {
+    background: white;
+    padding: 8px;
+    border-radius: 6px;
+    display: inline-block;
+    margin-top: 6px;
+  }
+  .signin-field .scan-qr img { max-width: 130px; display: block; }
+
+  /* ---- Audit counter + change-password ---------------------------- */
+  .audit-line {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .audit-line b { color: var(--fg); font-weight: 600; }
+  .audit-line .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 2px;
+    margin: 0;
+    text-decoration: underline;
+  }
+  .audit-line .link-btn:hover { filter: brightness(1.1); }
+  .audit-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 4px 0 0;
+    line-height: 1.5;
+    font-style: italic;
+  }
+  .change-password {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .change-password > summary {
+    color: var(--accent);
+    font-size: 13px;
+    cursor: pointer;
+    list-style: none;
+    padding: 4px 0;
+    font-weight: 500;
+  }
+  .change-password > summary::-webkit-details-marker { display: none; }
+  .pw-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .pw-form label {
+    margin-top: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .pw-form input[type=password] {
+    margin-top: 4px;
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+  .pw-form button { align-self: flex-start; margin-top: 8px; }
+
+  /* ---- Settings disclosure (collapsed by default) ------------------ */
+  .settings {
+    margin-top: 22px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .settings > summary {
+    padding: 12px 18px;
+    cursor: pointer;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+    list-style: none;
+    user-select: none;
+    transition: background 0.1s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .settings > summary::-webkit-details-marker { display: none; }
+  .settings > summary::after {
+    content: "▾";
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .settings[open] > summary::after { transform: rotate(180deg); }
+  .settings > summary:hover { background: rgba(88,192,255,0.04); }
+  .settings > summary .muted { font-weight: 400; font-size: 13px; }
+  .settings .panel { padding: 4px 18px 18px; }
+  .settings h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin: 16px 0 6px;
+    font-weight: 600;
+  }
+  .settings .field { margin: 8px 0 12px; }
+  .settings .field b { color: var(--muted); font-weight: 500; font-size: 13px; display: block; margin-bottom: 4px; }
+</style>
+
+<div class="welcome-hero">
+  <h2>Set up your phone</h2>
+  <p>End-to-end encrypted &middot; reachable only over Tor &middot; only you control it.</p>
+</div>
+
+<div id="status-panel" class="status-panel" data-onion="{{ onion }}">
+  <h3>Setup status</h3>
+  <ul id="status-list">
+    <li><span class="dot">●</span> <span>Server up</span></li>
+    <li><span class="dot">●</span> <span>Onion published</span> <code>{{ onion[:24] }}…</code></li>
+    <li id="device-status" class="waiting"><span class="dot">⏳</span> <span>Waiting for the first phone to sign in&hellip;</span></li>
+  </ul>
+</div>
+
+<!-- Step 1 -->
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <div class="step-title">Install Element &amp; Orbot</div>
+    <div class="step-detail">
+      Scan with your phone's camera &mdash; each QR opens its app store.
+      You need <b>both</b> apps.
+    </div>
+    <div class="install-grid">
+      <div class="install-cell">
+        <p class="platform">📱 Element<br>Android</p>
+        <div class="qr-mini"><img src="{{ element_android_qr }}" alt="Play Store: Element"></div>
+        <p class="label">Play Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🍎 Element<br>iPhone</p>
+        <div class="qr-mini"><img src="{{ element_ios_qr }}" alt="App Store: Element"></div>
+        <p class="label">App Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🧅 Orbot<br>Android</p>
+        <div class="qr-mini"><img src="{{ orbot_android_qr }}" alt="Play Store: Orbot"></div>
+        <p class="label">Play Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🧅 Orbot<br>iPhone</p>
+        <div class="qr-mini"><img src="{{ orbot_ios_qr }}" alt="App Store: Orbot"></div>
+        <p class="label">App Store</p>
+      </div>
+    </div>
+    <p class="install-warn">
+      Install <b>Element</b> &mdash; the blue logo, <em>not</em> Element X.
+      Element X uses a sliding-sync flow that's rough over Tor in v0.1
+      and gives a "cannot reach homeserver" error.
+    </p>
+  </div>
+</div>
+
+<!-- Step 2 -->
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <div class="step-title">Open Element once, then start Orbot</div>
+    <div class="step-detail">
+      Open Element on your phone briefly so Orbot can see it in the
+      app list, then close it.<br>
+      Open <b>Orbot</b> &rarr; tap <b>Start</b> &rarr; allow the VPN
+      prompt &rarr; wait for <em>Connected to the Tor network</em>.<br>
+      <span style="color:var(--muted);">(Optional: in Orbot, switch
+      to "Tor-Enabled Apps" mode and tick only Element &mdash; saves
+      battery.)</span>
+    </div>
+  </div>
+</div>
+
+<!-- Step 3 -->
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <div class="step-title">Add this server in Element</div>
+    <div class="step-detail">
+      Open Element &rarr; tap <b>Edit homeserver</b> on the sign-in
+      screen &rarr; paste the address.  Element will warn the server
+      uses HTTP &mdash; that's expected for <code>.onion</code>;
+      accept and continue.
+    </div>
+    <div class="signin-field">
+      <b>Server address</b>
+      <pre class="copyable">http://{{ onion }}</pre>
+      <details class="scan-toggle">
+        <summary>Show as QR (scan to copy)</summary>
+        <div class="scan-qr"><img src="{{ homeserver_qr }}" alt="server address QR"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- Step 4 -->
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <div class="step-title">Sign in &mdash; <em>not Create Account</em></div>
+    <div class="step-detail">
+      After adding the server, Element offers <b>Sign in</b> and
+      <b>Create account</b>.  Tap <b>Sign in</b>.  Open registration is
+      disabled on this box by design &mdash; new accounts are added
+      from the <a href="/people">Friends</a> page, not by signing up
+      from a phone.<br>
+      Enter the username and password below.  When the status panel
+      above flips to <em>"Phone connected"</em>, you're done.
+    </div>
+    <div class="signin-field">
+      <b>Username</b>
+      <pre class="copyable">{{ admin_user }}</pre>
+      <details class="scan-toggle">
+        <summary>Show as QR</summary>
+        <div class="scan-qr"><img src="{{ username_qr }}" alt="username QR"></div>
+      </details>
+    </div>
+    <div class="signin-field">
+      <b>Password</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ admin_password }}</pre>
+      </details>
+      <details class="scan-toggle">
+        <summary>Show as QR (also reveals)</summary>
+        <div class="scan-qr"><img src="{{ password_qr }}" alt="password QR"></div>
+      </details>
+
+      <div class="audit-line">
+        📊 This password has been visible
+        <b>{{ password_view_count }}</b> time{% if password_view_count != 1 %}s{% endif %}
+        since the last reset.
+        <form method="post" action="/reset-password-counter" style="display:inline;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link-btn">Reset counter</button>
+        </form>
+      </div>
+      <p class="audit-hint">
+        Compare this against the number of times you've opened this
+        page yourself.  A higher count means another browser session
+        has viewed it &mdash; possible 3rd-party interception.
+      </p>
+
+      <details class="change-password">
+        <summary>Set your own password &rarr;</summary>
+        <p class="muted" style="font-size:12px;margin:8px 0 6px;">
+          Recommended on first login.  Pick something you'll remember
+          (or store in a password manager).  <b>This signs out every
+          phone using this account &mdash; you'll need to sign in again
+          with the new password.</b>
+        </p>
+        <form method="post" action="/change-admin-password" class="pw-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>New password (12+ characters)
+            <input type="password" name="new_password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <label>Confirm
+            <input type="password" name="new_password_confirm" autocomplete="new-password" minlength="12" required>
+          </label>
+          <button type="submit" class="danger">Change password</button>
+        </form>
+      </details>
+
+      {% if password_changed %}
+      <div class="alert info" style="margin-top:10px;">
+        ✓ Admin password changed.  All other devices were signed out;
+        re-sign-in on your phone with the new password.
+      </div>
+      {% endif %}
+      {% if password_error %}
+      <div class="alert" style="margin-top:10px;">
+        Password change failed:
+        {% if password_error == "too-short" %}new password must be at least 12 characters.
+        {% elif password_error == "mismatch" %}the confirmation didn't match.
+        {% elif password_error == "not-setup" %}setup state is missing — contact support.
+        {% else %}server-side error — check <code>pureprivacy logs wizard</code>.
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if counter_reset %}
+      <div class="alert info" style="margin-top:10px;">
+        ✓ View counter reset to 0.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<details class="settings">
+  <summary>
+    <span>⚙ Advanced</span>
+    <span class="muted">recovery key &middot; federation &middot; AI agent</span>
+  </summary>
+  <div class="panel">
+
+    {% if recovery_passphrase %}
+    <h4>Recovery key</h4>
+    <p class="muted" style="font-size:13px;">If you forget your password,
+      this resets it without wiping the box.  Write it down somewhere safe
+      &mdash; ideally a password manager or a piece of paper in your wallet.</p>
+    <div class="field">
+      <b>Recovery key</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ recovery_passphrase }}</pre>
+      </details>
+    </div>
+    <div class="audit-line">
+      📊 The recovery key has been visible
+      <b>{{ recovery_view_count }}</b> time{% if recovery_view_count != 1 %}s{% endif %}
+      since the last reset.
+      <form method="post" action="/reset-recovery-counter" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="link-btn">Reset counter</button>
+      </form>
+    </div>
+    <p class="audit-hint">
+      Unlike the admin password, the recovery key should rarely be
+      viewed &mdash; you write it down once and only return for an
+      actual recovery.  A growing count after first-boot is suspicious.
+    </p>
+    {% if recovery_counter_reset %}
+    <div class="alert info" style="margin-top:8px;font-size:12px;">
+      ✓ Recovery-key view counter reset to 0.
+    </div>
+    {% endif %}
+    <p class="muted" style="font-size:12px;margin-top:8px;">When you need it,
+      run on the host:
+      <code>pureprivacy admin reset-password "&lt;your-recovery-key&gt;"</code></p>
+    {% endif %}
+
+    <h4>Federation with another box</h4>
+    <p class="muted" style="font-size:13px;">Pair with someone else's
+      PurePrivacy box so users on either side can join shared rooms.
+      {% if peers %}You have <b>{{ peers|length }}</b> peer{% if peers|length != 1 %}s{% endif %} paired.{% else %}You have no peers paired yet.{% endif %}</p>
+    <p><a class="btn ghost" href="/pair">Manage federation</a></p>
+
+    <h4>AI agent (MCP)</h4>
+    <p class="muted" style="font-size:13px;">Connect Claude Code, Cursor,
+      or any MCP-speaking agent.</p>
+    <div class="field"><b>Endpoint</b><pre class="copyable">http://127.0.0.1:8089/mcp</pre></div>
+    <div class="field">
+      <b>Bearer token</b>
+      <details>
+        <summary class="muted" style="cursor:pointer;padding:4px 0;font-size:12px;">Click to reveal</summary>
+        <pre class="copyable">{{ mcp_token }}</pre>
+      </details>
+    </div>
+    <div class="field"><b>Bot Matrix ID</b><pre class="copyable">{{ mcp_user }}</pre></div>
+
+    {% if mcp_grace_remaining_s and mcp_grace_remaining_s > 0 %}
+    <div class="alert">
+      <b>Previous token still accepted for ~{{ (mcp_grace_remaining_s // 60) }} min {{ mcp_grace_remaining_s % 60 }} s.</b>
+      Reconfigure your agents with the new token above; once the window
+      closes, the old token starts returning 403.
+    </div>
+    <form method="post" action="/revoke-prev-token"
+          data-confirm="Revoke the previous token immediately?  Any agent still using it will start getting 403s on its next request.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Revoke previous token now</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="/rotate-token"
+          data-confirm="Rotate the MCP token?  The new token is shown immediately; the old token keeps working for 10 minutes so your agents can migrate.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Rotate MCP token</button>
+    </form>
+    <p class="muted" style="font-size:12px;">Rotation has a 10-minute grace
+      window so agents can migrate; <i>Revoke previous token now</i> cuts
+      it off immediately.</p>
+
+  </div>
+</details>
+
+<script>
+  // Live setup-status poller.  Hits /api/setup-status every 5 s and
+  // updates the device-status row in place.  Stops if the user navigates
+  // away (page lifecycle handles cleanup automatically).
+  (function () {
+    var devEl = document.getElementById("device-status");
+    if (!devEl) return;
+
+    function paint(state) {
+      // state is the JSON payload from /api/setup-status.
+      var devices = (state && state.devices) || [];
+      if (state && state.error && devices.length === 0) {
+        devEl.className = "error";
+        devEl.innerHTML =
+          '<span class="dot">⚠</span> <span>Could not query device list ' +
+          '(<code>' + escapeHtml(state.error) + '</code>)</span>';
+        return;
+      }
+      if (devices.length === 0) {
+        devEl.className = "waiting";
+        devEl.innerHTML =
+          '<span class="dot">⏳</span> <span>Waiting for the first phone ' +
+          'to sign in&hellip;</span>';
+        return;
+      }
+      var first = devices[0];
+      var rest = "";
+      for (var i = 1; i < devices.length; i++) {
+        var d = devices[i];
+        rest += '<div class="device">+ <b>' + escapeHtml(d.display_name) +
+                '</b> <span class="age">&middot; ' + escapeHtml(d.last_seen_relative) +
+                '</span></div>';
+      }
+      devEl.className = "";
+      devEl.innerHTML =
+        '<span class="dot">✓</span> <span>Phone connected &mdash; <b>' +
+        escapeHtml(first.display_name) + '</b> <span class="age">&middot; ' +
+        escapeHtml(first.last_seen_relative) + '</span></span>' + rest;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c];
+      });
+    }
+
+    function tick() {
+      fetch("/api/setup-status", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(paint, function () {
+          devEl.className = "error";
+          devEl.innerHTML =
+            '<span class="dot">⚠</span> <span>Could not reach the wizard ' +
+            '— is the container up?</span>';
+        });
+    }
+
+    tick();                       // immediate first paint
+    setInterval(tick, 5000);      // then every 5 s
+  })();
+</script>
+
+{% endblock %}

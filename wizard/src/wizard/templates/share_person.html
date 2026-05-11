@@ -2,59 +2,249 @@
 {% set active = "people" %}
 {% block title %}{% if reset %}New password{% else %}Account ready{% endif %}{% endblock %}
 {% block body %}
-<p class="muted"><a href="/people" style="color:var(--accent);">← back to people</a></p>
 
-{% if reset %}
-<h2 style="margin-top:0;">Reset password for {{ user_id }}</h2>
-<p class="muted">Their old password is no longer valid.  Their existing
-devices have been signed out — they need the new password below to log
-back in on each device.</p>
-{% else %}
-<h2 style="margin-top:0;">Account ready</h2>
-<p class="muted">Show this page to <b>{{ user_id }}</b>.  They install
-Element on their phone, point it at your homeserver, and use the
-credentials below.  This is the only time the password is shown — copy it
-now (or hand them the QR).</p>
+<style>
+  /* Local copies of the home-page step / install / signin styles so
+     this page renders identically without bleeding global CSS.  Kept
+     close to home.html so the two flows feel like one product. */
+  .welcome-hero {
+    text-align: center;
+    padding: 2px 0 18px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .welcome-hero h2 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .welcome-hero p { color: var(--muted); margin: 0; font-size: 14px; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    column-gap: 16px;
+    align-items: start;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step:first-of-type { padding-top: 8px; }
+  .step:last-of-type { border-bottom: none; padding-bottom: 4px; }
+  .step-num {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent); color: var(--bg);
+    font-weight: 700; font-size: 17px;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+  .step-body { min-width: 0; }
+  .step-title {
+    font-size: 16px; font-weight: 600;
+    color: var(--fg);
+    margin: 4px 0 4px;
+    letter-spacing: -0.005em;
+  }
+  .step-detail {
+    font-size: 13px; color: var(--muted);
+    line-height: 1.55;
+    margin: 0 0 10px;
+  }
+  .step-detail b { color: var(--fg); font-weight: 600; }
+  .step-detail em { color: var(--fg); font-style: normal; font-weight: 600; }
+
+  .install-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 8px; margin: 8px 0 0;
+  }
+  @media (min-width: 540px) { .install-grid { grid-template-columns: repeat(4, 1fr); } }
+  .install-cell {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .install-cell .platform {
+    font-size: 11px; font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 6px;
+    line-height: 1.2;
+  }
+  .install-cell .qr-mini { background: white; padding: 6px; border-radius: 5px; display: inline-block; }
+  .install-cell .qr-mini img { max-width: 96px; display: block; }
+  .install-cell .label { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
+  .install-warn { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .install-warn b { color: var(--fg); font-weight: 600; }
+
+  .signin-field {
+    margin: 8px 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .signin-field b {
+    display: block;
+    color: var(--muted); font-weight: 500;
+    font-size: 11px; margin: 0 0 5px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .signin-field pre { font-size: 13px; padding: 6px 8px; margin: 0; }
+  .signin-field pre.copyable { padding-right: 56px; }
+  .signin-field .scan-toggle { margin-top: 6px; }
+  .signin-field .scan-toggle summary {
+    color: var(--accent); font-size: 12px;
+    cursor: pointer; list-style: none;
+    padding: 3px 0;
+  }
+  .signin-field .scan-toggle summary::-webkit-details-marker { display: none; }
+  .signin-field .scan-toggle summary::before { content: "📷  "; }
+  .signin-field .scan-qr {
+    background: white;
+    padding: 8px;
+    border-radius: 6px;
+    display: inline-block;
+    margin-top: 6px;
+  }
+  .signin-field .scan-qr img { max-width: 130px; display: block; }
+
+  .back-link { color: var(--accent); text-decoration: none; font-size: 13px; }
+</style>
+
+<p style="margin-top:0;"><a href="/people" class="back-link">&larr; back to Friends</a></p>
+
+<div class="welcome-hero">
+  {% if reset %}
+  <h2>New password for {{ user_id }}</h2>
+  <p>Their previous devices were signed out.  Walk them through the four
+     steps below to get back in.</p>
+  {% else %}
+  <h2>Account ready &mdash; show this page to {{ user_id }}</h2>
+  <p>This is the only time the password is shown.  Copy it now, or hand
+     them this page on the laptop screen, or share via QR.</p>
+  {% endif %}
+</div>
+
+{% if is_admin %}
+<div class="alert" style="margin-bottom:18px;">
+  <b>This account is an admin.</b>  They can add and remove other people
+  on this box, including <em>you</em>.  Only flag accounts as admin for
+  people you fully trust.
+</div>
 {% endif %}
 
-<div class="row">
-  <div>
-    <div class="field"><b>Homeserver</b><pre class="copyable">{{ homeserver_url }}</pre></div>
-    <div class="field"><b>Username</b><pre class="copyable">{{ user_id }}</pre></div>
-    <div class="field">
-      <b>Password</b>
-      <details open>
-        <summary class="muted" style="cursor:pointer;padding:6px 0;">Click to hide / reveal</summary>
-        <pre class="copyable">{{ password }}</pre>
-      </details>
+<!-- Step 1 -->
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <div class="step-title">Install Element &amp; Orbot</div>
+    <div class="step-detail">
+      Scan with their phone's camera &mdash; each QR opens its app store.
+      <b>Both apps</b> are required.
     </div>
-    {% if is_admin %}<p class="muted danger"><b>This account is an admin.</b>  They can add and remove other people on this box.</p>{% endif %}
-  </div>
-  <div>
-    <p class="muted">Or scan with their phone:</p>
-    <div class="qr"><img src="{{ qr_data_url }}" alt="onboarding QR"></div>
+    <div class="install-grid">
+      <div class="install-cell">
+        <p class="platform">📱 Element<br>Android</p>
+        <div class="qr-mini"><img src="{{ element_android_qr }}" alt="Play Store: Element"></div>
+        <p class="label">Play Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🍎 Element<br>iPhone</p>
+        <div class="qr-mini"><img src="{{ element_ios_qr }}" alt="App Store: Element"></div>
+        <p class="label">App Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🧅 Orbot<br>Android</p>
+        <div class="qr-mini"><img src="{{ orbot_android_qr }}" alt="Play Store: Orbot"></div>
+        <p class="label">Play Store</p>
+      </div>
+      <div class="install-cell">
+        <p class="platform">🧅 Orbot<br>iPhone</p>
+        <div class="qr-mini"><img src="{{ orbot_ios_qr }}" alt="App Store: Orbot"></div>
+        <p class="label">App Store</p>
+      </div>
+    </div>
+    <p class="install-warn">
+      Install <b>Element</b> &mdash; the blue logo, <em>not</em>
+      Element X.  Element X uses a sliding-sync flow that's rough over
+      Tor in v0.1 and gives a "cannot reach homeserver" error.
+    </p>
   </div>
 </div>
 
-<hr>
+<!-- Step 2 -->
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <div class="step-title">Open Element once, then start Orbot</div>
+    <div class="step-detail">
+      Open Element on their phone briefly so Orbot picks it up in the
+      app list, then close it.<br>
+      Open <b>Orbot</b> &rarr; tap <b>Start</b> &rarr; allow the VPN
+      prompt &rarr; wait for <em>Connected to the Tor network</em>.<br>
+      <span style="color:var(--muted);">(Optional: in Orbot, switch
+      to "Tor-Enabled Apps" mode and tick only Element &mdash; saves
+      battery.)</span>
+    </div>
+  </div>
+</div>
 
-<h2>How they connect</h2>
-<ol>
-  <li>Install <a href="https://element.io/download" target="_blank">Element</a>
-      (the original — <b>recommended for v0.1</b>) on their phone.  Element X
-      also works but has rougher edges over Tor.</li>
-  <li>If they're connecting over Tor, install
-      <a href="https://orbot.app/" target="_blank">Orbot</a> (Android) or
-      <a href="https://onionbrowser.com/" target="_blank">Onion Browser</a> (iOS)
-      first and route Element through it.  On iOS, make sure Onion Browser's
-      Tor VPN is on (Settings → VPN).</li>
-  <li>In Element: <i>Sign in</i> → <i>Edit / Change homeserver</i> → paste the
-      homeserver URL above → enter username and password.  Accept the HTTP
-      warning — it's expected for <code>.onion</code> services.</li>
-</ol>
+<!-- Step 3 -->
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <div class="step-title">Add this server in Element</div>
+    <div class="step-detail">
+      Open Element &rarr; tap <b>Edit homeserver</b> on the sign-in
+      screen &rarr; paste the address.  Element will warn the server
+      uses HTTP &mdash; that's expected for <code>.onion</code>;
+      accept and continue.
+    </div>
+    <div class="signin-field">
+      <b>Server address</b>
+      <pre class="copyable">{{ homeserver_url }}</pre>
+      <details class="scan-toggle">
+        <summary>Show as QR (scan to copy)</summary>
+        <div class="scan-qr"><img src="{{ homeserver_qr }}" alt="server address QR"></div>
+      </details>
+    </div>
+  </div>
+</div>
 
-<p class="muted">If they're going to be in encrypted rooms with the MCP bot,
-they'll need to verify the bot's device once.  See <code>docs/architecture.md</code>.</p>
+<!-- Step 4 -->
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <div class="step-title">Sign in &mdash; <em>not Create Account</em></div>
+    <div class="step-detail">
+      Element offers <b>Sign in</b> and <b>Create account</b>.  Tap
+      <b>Sign in</b>.  Open registration is disabled on this box; new
+      accounts come from this page, not from a phone.
+    </div>
+    <div class="signin-field">
+      <b>Username</b>
+      <pre class="copyable">{{ localpart }}</pre>
+      <details class="scan-toggle">
+        <summary>Show as QR</summary>
+        <div class="scan-qr"><img src="{{ username_qr }}" alt="username QR"></div>
+      </details>
+    </div>
+    <div class="signin-field">
+      <b>Password</b>
+      <pre class="copyable">{{ password }}</pre>
+      <details class="scan-toggle">
+        <summary>Show as QR</summary>
+        <div class="scan-qr"><img src="{{ password_qr }}" alt="password QR"></div>
+      </details>
+    </div>
+    <p class="install-warn" style="margin-top:14px;">
+      <b>One-time view.</b>  When you click "Done" or close this tab the
+      password is gone for good &mdash; if they lose it, use the Reset
+      password action on the <a href="/people">Friends</a> page to
+      issue a new one.
+    </p>
+  </div>
+</div>
 
-<p style="margin-top:24px;"><a class="btn" href="/people">Done</a></p>
+<p style="margin:24px 0 0;"><a class="btn" href="/people">Done</a></p>
+
 {% endblock %}
