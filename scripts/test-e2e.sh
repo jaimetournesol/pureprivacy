@@ -12,6 +12,15 @@
 # Exits 0 on success, non-zero with a diagnostic on failure.
 set -euo pipefail
 
+# Git Bash compatibility: docker.exe on Windows mangles container paths
+# like /shared/... into C:/Program Files/Git/shared/...  Setting
+# MSYS_NO_PATHCONV=1 only around docker calls keeps path conversion
+# working for mktemp/curl etc.  No-op on Linux/macOS.
+if [[ "${MSYSTEM:-}" == MINGW* || "${MSYSTEM:-}" == MSYS ]]; then
+    docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
+    export -f docker
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 

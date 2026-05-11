@@ -61,6 +61,23 @@
 # Linux host, install the systemd unit:  ./scripts/install-systemd.sh
 set -euo pipefail
 
+# Git Bash compatibility: docker.exe on Windows rewrites POSIX paths
+# (e.g. /shared/onion_hostname → C:/Program Files/Git/shared/...) before
+# they reach the daemon, breaking every `docker exec ... /container/path`
+# call.  Wrapping docker in MSYS_NO_PATHCONV scopes the workaround so
+# host-side paths (mktemp, curl -o, -v mount sources) keep normal
+# conversion.  No-op on Linux/macOS.
+if [[ "${MSYSTEM:-}" == MINGW* || "${MSYSTEM:-}" == MSYS ]]; then
+    docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
+    export -f docker
+    # Convert MSYS paths (e.g. /tmp/foo) to Windows paths (C:/Users/.../Temp/foo)
+    # for use as `docker run -v <host>:<container>` source halves.  No-op
+    # elsewhere; cygpath ships with Git Bash.
+    _host_path() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+else
+    _host_path() { echo "$1"; }
+fi
+
 PROJECT="pureprivacy"
 # Resolve through symlinks so `pureprivacy` works whether you call it as
 # ./scripts/pureprivacy or via a symlink on $PATH. Prefer GNU readlink
@@ -1217,7 +1234,7 @@ cmd_backup() {
     else
         docker run --rm \
             "${mounts[@]}" \
-            -v "${outdir}:/dst" \
+            -v "$(_host_path "${outdir}"):/dst" \
             alpine:3.20 \
             tar czf "/dst/${outname}" -C /src .
     fi
@@ -1303,7 +1320,7 @@ cmd_restore() {
     done
     docker run --rm \
         "${mounts[@]}" \
-        -v "$(dirname "${src}"):/backup:ro" \
+        -v "$(_host_path "$(dirname "${src}")"):/backup:ro" \
         alpine:3.20 sh -c "
             set -eu
             for v in $(_volumes); do
