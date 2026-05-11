@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-11
+
+First tagged release.  Rolls up everything below the first
+`## [0.1.0-rc.1]` heading further down (the initial public push of
+the appliance), plus the post-hardening review pass and the seven
+sennetor branches merged on 2026-05-11.
+
 ### Fixed (post-hardening review)
 
 A second audit pass after the v0.1.0 hardening exposed a set of bugs
@@ -445,9 +452,12 @@ internal v0.1 audit (see `SECURITY.md`).
 - Synapse config rendering switched from `envsubst` to a small Python
   script so the federation whitelist can be a real list, not a scalar.
 
-## [0.1.0] - 2026-05-05
+## [0.1.0-rc.1] - 2026-05-05
 
-First public release.
+Initial public push of the appliance, pre-hardening.  Never tagged
+as a release on its own — the section is kept here as a record of
+the first cut of the codebase.  See `## [0.1.0]` above for the
+shipped release.
 
 ### Added
 - Tor-only Matrix homeserver appliance based on Synapse, Postgres, and Tor.
