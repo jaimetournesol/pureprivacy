@@ -75,11 +75,12 @@ report_stats: false
 # i.e. they're consumed by EXTERNAL clients (phones reaching us through
 # Tor) — so the hostname must be the .onion that Tor maps to coturn,
 # not the docker-internal "coturn" alias.  Tor's HiddenServicePort
-# routes ${SERVER_NAME}:3478 / 5349 / 49152-61 → coturn:* per the
-# torrc.  See docs/architecture.md for the port table.
+# routes ${SERVER_NAME}:3478 / 49152-91 → coturn:* per the torrc.
+# Only the plain `turn:` URI is advertised: Tor already encrypts the
+# transport so TLS-over-Tor is redundant, and coturn ships without a
+# certificate so :5349 wouldn't open anyway.
 turn_uris:
   - "turn:${SERVER_NAME}:3478?transport=tcp"
-  - "turns:${SERVER_NAME}:5349?transport=tcp"
 turn_shared_secret: "${TURN_SHARED_SECRET}"
 turn_user_lifetime: 86400000
 turn_allow_guests: false
