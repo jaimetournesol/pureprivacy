@@ -30,9 +30,18 @@ static-auth-secret=${TURN_SHARED_SECRET}
 # Realm matches the homeserver name so credentials are scoped correctly.
 realm=${SERVER_NAME}
 
-# Hard mode: refuse plain UDP because Tor cannot tunnel it.
+# Hard mode: refuse plain UDP on the CLIENT leg because Tor cannot
+# tunnel it (Tor is TCP-only).  We DO allow UDP on the RELAY leg —
+# Element Classic and other libwebrtc clients only know how to ALLOCATE
+# with REQUESTED-TRANSPORT=UDP, so refusing UDP relays makes 1:1 calls
+# 442 out before any allocation happens.  For *same-instance* calls
+# (both peers reaching this same coturn through their own Tor onions),
+# the relay→relay forwarding never leaves the host — it's a UDP
+# datagram between two of coturn's own sockets on 172.30.0.11, and
+# Tor is never asked to carry UDP.  Cross-instance / federated voice
+# is a separate matter; see docs/voice.md.
 no-udp
-no-udp-relay
+# no-udp-relay     # intentionally disabled — see note above
 
 # Defensive defaults.
 no-multicast-peers
