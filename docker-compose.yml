@@ -65,6 +65,13 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    environment:
+      # envsubst in entrypoint.sh renders torrc.tmpl's
+      # HiddenServicePort lines from this.  Compose's YAML-level
+      # interpolation handles the static IPs in services blocks, but
+      # the tor container needs the prefix at runtime to render the
+      # template too.
+      PUREPRIVACY_NET_PREFIX: ${PUREPRIVACY_NET_PREFIX:-172.30.0}
     volumes:
       - tor_data:/var/lib/tor
       - shared:/shared
