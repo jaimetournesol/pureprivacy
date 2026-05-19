@@ -46,6 +46,23 @@ start_publisher() {
     printf '%s\n' "${host}" > "${SHARED}/onion_hostname"
     chmod 0644 "${SHARED}/onion_hostname"
     echo "tor: published ${host} to ${SHARED}/onion_hostname"
+
+    # Also publish the OnionCat-style IPv6 derived from this onion so
+    # coturn (and any other consumer) can read it instead of recomputing
+    # the SHA-256 in their own entrypoint.  See docs/turn-udp-tor-shim.md
+    # for the addressing scheme.
+    local nosuf digest ipv6
+    nosuf="${host%.onion}"
+    # Lowercase + sha256 + first 20 hex chars (= 10 bytes = 80 low bits).
+    digest="$(printf '%s' "${nosuf}" | tr 'A-Z' 'a-z' | sha256sum | cut -c1-20)"
+    if [[ ${#digest} -ne 20 ]]; then
+        echo "tor: sha256 digest unexpected length ${#digest}; skipping onioncat_ipv6" >&2
+        return 0
+    fi
+    ipv6="fd87:d87e:eb43:${digest:0:4}:${digest:4:4}:${digest:8:4}:${digest:12:4}:${digest:16:4}"
+    printf '%s\n' "${ipv6}" > "${SHARED}/onioncat_ipv6"
+    chmod 0644 "${SHARED}/onioncat_ipv6"
+    echo "tor: published ${ipv6} to ${SHARED}/onioncat_ipv6"
 }
 
 start_publisher &

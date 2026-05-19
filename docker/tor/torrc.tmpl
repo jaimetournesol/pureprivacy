@@ -74,6 +74,12 @@ HiddenServicePort 8082  ${PUREPRIVACY_NET_PREFIX}.14:8080
 # upgrade to livekit:7880.  Phones connect to wss://${ONION}:7443
 # (URL handed out by lk-jwt's JWT after the override in its entrypoint).
 HiddenServicePort 7443  ${PUREPRIVACY_NET_PREFIX}.13:7443
+# udprelay shim (cross-instance voice spike; harmless if the udprelay
+# compose profile isn't active).  Peer's udprelay dials in here via
+# SOCKS5 and ships framed UDP back and forth.  The shim shares
+# coturn's network namespace (Phase 1b), so port 7001 lands on
+# coturn's IP — not a separate udprelay address.
+HiddenServicePort 7001  ${PUREPRIVACY_NET_PREFIX}.11:7001
 
 Log notice stdout
 SafeLogging 1

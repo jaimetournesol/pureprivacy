@@ -65,6 +65,13 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    environment:
+      # envsubst in entrypoint.sh renders torrc.tmpl's
+      # HiddenServicePort lines from this.  Compose's YAML-level
+      # interpolation handles the static IPs in services blocks, but
+      # the tor container needs the prefix at runtime to render the
+      # template too.
+      PUREPRIVACY_NET_PREFIX: ${PUREPRIVACY_NET_PREFIX:-172.30.0}
     volumes:
       - tor_data:/var/lib/tor
       - shared:/shared
@@ -175,6 +182,26 @@ services:
       - SETUID
       - SETGID
       - NET_BIND_SERVICE
+      # NET_ADMIN needed only for the cross-instance voice spike: the
+      # entrypoint runs `ip -6 addr add <OnionCat-IPv6>/128 dev eth0`
+      # so coturn can bind its relay sockets on the OnionCat address.
+      # Harmless when the udprelay profile is off — the address simply
+      # isn't used by anything.
+      - NET_ADMIN
+    # Override default-hardening's no-new-privileges so NET_ADMIN
+    # actually propagates from the bash entrypoint to /sbin/ip at
+    # exec time.  Without this, even with the cap in the bounding
+    # set, RTNETLINK rejects the ADDR_ADD with EPERM.  This *only*
+    # widens privs for execs from inside the container; cap_drop:ALL
+    # still keeps the effective set tight.
+    security_opt:
+      - no-new-privileges:false
+    # Docker disables IPv6 on container interfaces by default
+    # (disable_ipv6=1).  Re-enable it on eth0 so coturn can `ip -6
+    # addr add` and bind() its relay sockets on the OnionCat IPv6.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv6.conf.default.disable_ipv6=0
     container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-coturn
     build:
       context: ./docker/coturn
@@ -369,6 +396,52 @@ services:
       retries: 6
       start_period: 30s
 
+  # ──────────────────────────────────────────────────────────────────
+  # udprelay (exploratory, Phase 1b of the cross-instance voice spike)
+  # See docs/turn-udp-tor-shim.md.  Opt-in via the `udprelay` profile;
+  # the default `pureprivacy up` does not pull this in.
+  #
+  # TUN-mode design: udprelay shares coturn's network namespace so the
+  # TUN device it creates is visible to coturn — coturn's outbound
+  # IPv6 packets to the OnionCat /48 route through the TUN, which
+  # udprelay reads, frames, and ships through Tor SOCKS5 to the peer
+  # box's udprelay.  Incoming framed traffic is decoded back into raw
+  # IPv6/UDP packets and written to the TUN; the kernel demuxes to
+  # whatever socket is listening (in the real flow: coturn's relay
+  # range).
+  # ──────────────────────────────────────────────────────────────────
+  udprelay:
+    <<: *default-restart
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN     # TUNSETIFF + ip -6 addr add + ip link up
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-udprelay
+    build:
+      context: ./udprelay
+    image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-udprelay:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
+    depends_on:
+      coturn:
+        condition: service_healthy
+      tor:
+        condition: service_healthy
+    # Share coturn's network namespace so the TUN device + OnionCat
+    # /48 route live in the same namespace coturn binds in.
+    network_mode: "service:coturn"
+    volumes:
+      - shared:/shared:ro
+    command:
+      - "--mode=tun"
+      - "--tun-name=ocat0"
+      - "--tcp-listen=0.0.0.0:7001"
+      - "--peer-onion=${UDPRELAY_PEER_ONION}:7001"
+      - "--tor-socks=tor:9050"
+    profiles: ["udprelay"]
+
 networks:
   pureprivacy_net:
     # Default name keeps the single-instance behaviour identical to v0.1.
@@ -377,9 +450,16 @@ networks:
     # so docker doesn't try to bind two networks to the same /24.
     name: ${COMPOSE_PROJECT_NAME:-pureprivacy}_net
     driver: bridge
+    # Enabling IPv6 on the bridge is necessary for the cross-instance
+    # voice spike (docs/turn-udp-tor-shim.md) — Docker disables IPv6
+    # on container interfaces by default, which makes coturn's
+    # OnionCat IPv6 bind() fail.  The fd00:: subnet is just so Docker
+    # accepts the IPv6 config; nothing actually routes through it.
+    enable_ipv6: true
     ipam:
       config:
         - subnet: ${PUREPRIVACY_SUBNET:-172.30.0.0/24}
+        - subnet: ${PUREPRIVACY_SUBNET_V6:-fd00:cafe:beef::/64}
 
 volumes:
   shared:
