@@ -188,16 +188,39 @@ func parseIP(s string) (net.IP, error) {
 }
 
 func main() {
-	udpListen := flag.String("udp-listen", "", "host:port to receive local UDP on")
+	mode := flag.String("mode", "udp", "udp (Phase 0/1a, UDP↔TCP at app layer) | tun (Phase 1b, TUN device + OnionCat IPv6 — Linux only)")
+	udpListen := flag.String("udp-listen", "", "[udp mode] host:port to receive local UDP on")
 	tcpListen := flag.String("tcp-listen", "", "host:port to receive remote frames on")
-	peerTCP := flag.String("peer-tcp", "", "peer udprelay's tcp host:port (Phase 0 — direct TCP)")
+	peerTCP := flag.String("peer-tcp", "", "[udp mode] peer udprelay's tcp host:port (Phase 0 — direct TCP)")
 	peerOnion := flag.String("peer-onion", "", "peer udprelay's onion host:port (Phase 1 — dialed via SOCKS5)")
 	torSocks := flag.String("tor-socks", "tor:9050", "SOCKS5 proxy address for --peer-onion")
-	udpTarget := flag.String("udp-target", "", "local UDP destination to emit decoded payloads to")
-	selfIPStr := flag.String("self-ip", "", "this shim's IPv6 (frame metadata; ignored if empty)")
-	peerIPStr := flag.String("peer-ip", "", "peer shim's IPv6 (frame metadata; ignored if empty)")
+	udpTarget := flag.String("udp-target", "", "[udp mode] local UDP destination to emit decoded payloads to")
+	selfIPStr := flag.String("self-ip", "", "[udp mode] this shim's IPv6 (frame metadata; ignored if empty)")
+	peerIPStr := flag.String("peer-ip", "", "[udp mode] peer shim's IPv6 (frame metadata; ignored if empty)")
+	tunName := flag.String("tun-name", "ocat0", "[tun mode] TUN device name to create")
+	localOnion := flag.String("local-onion", "", "[tun mode] this box's .onion (derives local OnionCat IPv6)")
 	dialTimeout := flag.Duration("dial-timeout", 30*time.Second, "TCP/SOCKS5 dial timeout")
 	flag.Parse()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() { <-sig; log.Printf("shutting down"); cancel() }()
+
+	if *mode == "tun" {
+		if *tcpListen == "" || *peerOnion == "" {
+			fail("--mode=tun requires --tcp-listen and --peer-onion")
+		}
+		host, port, err := parseHostPort(*peerOnion)
+		if err != nil {
+			fail("--peer-onion: " + err.Error())
+		}
+		if err := runTunMode(ctx, *tunName, *localOnion, host, port, *torSocks, *tcpListen, *dialTimeout); err != nil {
+			log.Fatalf("tun mode: %v", err)
+		}
+		return
+	}
 
 	if *udpListen == "" || *tcpListen == "" || *udpTarget == "" {
 		fail("--udp-listen, --tcp-listen, and --udp-target are required")
@@ -230,17 +253,6 @@ func main() {
 		log.Printf("peer: socks5(%s) → %s:%d", *torSocks, host, port)
 		dial = socks5Dialer(*torSocks, host, port, *dialTimeout)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		log.Printf("shutting down")
-		cancel()
-	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

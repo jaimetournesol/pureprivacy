@@ -377,33 +377,50 @@ services:
       start_period: 30s
 
   # ──────────────────────────────────────────────────────────────────
-  # udprelay (exploratory, Phase 1a of the cross-instance voice spike)
+  # udprelay (exploratory, Phase 1b of the cross-instance voice spike)
   # See docs/turn-udp-tor-shim.md.  Opt-in via the `udprelay` profile;
-  # the default `pureprivacy up` does not pull this in.  Reaches the
-  # peer box's shim via Tor SOCKS5 (tor:9050) — onion of the peer goes
-  # in $UDPRELAY_PEER_ONION (set in this instance's .env after pairing).
+  # the default `pureprivacy up` does not pull this in.
+  #
+  # TUN-mode design: udprelay shares coturn's network namespace so the
+  # TUN device it creates is visible to coturn — coturn's outbound
+  # IPv6 packets to the OnionCat /48 route through the TUN, which
+  # udprelay reads, frames, and ships through Tor SOCKS5 to the peer
+  # box's udprelay.  Incoming framed traffic is decoded back into raw
+  # IPv6/UDP packets and written to the TUN; the kernel demuxes to
+  # whatever socket is listening (in the real flow: coturn's relay
+  # range).
   # ──────────────────────────────────────────────────────────────────
   udprelay:
-    <<: [*default-restart, *default-hardening]
+    <<: *default-restart
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN     # TUNSETIFF + ip -6 addr add + ip link up
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/net/tun:/dev/net/tun
     container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-udprelay
     build:
       context: ./udprelay
     image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-udprelay:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
     depends_on:
-      init:
-        condition: service_completed_successfully
+      coturn:
+        condition: service_healthy
       tor:
         condition: service_healthy
+    # Share coturn's network namespace so the TUN device + OnionCat
+    # /48 route live in the same namespace coturn binds in.
+    network_mode: "service:coturn"
+    volumes:
+      - shared:/shared:ro
     command:
-      - "--udp-listen=0.0.0.0:7000"
+      - "--mode=tun"
+      - "--tun-name=ocat0"
       - "--tcp-listen=0.0.0.0:7001"
-      - "--udp-target=${UDPRELAY_UDP_TARGET:-127.0.0.1:7002}"
       - "--peer-onion=${UDPRELAY_PEER_ONION}:7001"
       - "--tor-socks=tor:9050"
     profiles: ["udprelay"]
-    networks:
-      pureprivacy_net:
-        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.15
 
 networks:
   pureprivacy_net:
