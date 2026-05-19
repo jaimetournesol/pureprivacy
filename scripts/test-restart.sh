@@ -23,8 +23,8 @@ fail()  { red "FAIL: $*"; exit 1; }
 # Capture pre-restart state.
 step "capturing pre-restart state"
 ./scripts/pureprivacy up >/dev/null
-ONION_BEFORE="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
-SETUP_BEFORE="$(docker exec pureprivacy-wizard cat /shared/.setup-complete 2>/dev/null \
+ONION_BEFORE="$(docker exec ${TOR} cat /shared/onion_hostname)"
+SETUP_BEFORE="$(docker exec ${WIZARD} cat /shared/.setup-complete 2>/dev/null \
     || echo "{}")"
 green "  onion = ${ONION_BEFORE}"
 
@@ -32,8 +32,8 @@ green "  onion = ${ONION_BEFORE}"
 step "test 1: stop + start"
 ./scripts/pureprivacy stop >/dev/null
 ./scripts/pureprivacy start >/dev/null
-ONION_AFTER="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
-SETUP_AFTER="$(docker exec pureprivacy-wizard cat /shared/.setup-complete 2>/dev/null \
+ONION_AFTER="$(docker exec ${TOR} cat /shared/onion_hostname)"
+SETUP_AFTER="$(docker exec ${WIZARD} cat /shared/.setup-complete 2>/dev/null \
     || echo "{}")"
 [[ "${ONION_AFTER}" == "${ONION_BEFORE}" ]] || fail "onion identity changed after stop/start"
 [[ "${SETUP_AFTER}" == "${SETUP_BEFORE}" ]] || fail "setup state changed after stop/start"
@@ -42,7 +42,7 @@ green "  onion + setup state preserved"
 # Test 2: docker compose restart.
 step "test 2: docker compose restart"
 ./scripts/pureprivacy restart >/dev/null
-ONION_AFTER="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
+ONION_AFTER="$(docker exec ${TOR} cat /shared/onion_hostname)"
 [[ "${ONION_AFTER}" == "${ONION_BEFORE}" ]] || fail "onion identity changed after restart"
 green "  onion preserved"
 
@@ -50,8 +50,8 @@ green "  onion preserved"
 step "test 3: down + up (full reboot scenario)"
 ./scripts/pureprivacy down >/dev/null
 ./scripts/pureprivacy up >/dev/null
-ONION_AFTER="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
-SETUP_AFTER="$(docker exec pureprivacy-wizard cat /shared/.setup-complete 2>/dev/null \
+ONION_AFTER="$(docker exec ${TOR} cat /shared/onion_hostname)"
+SETUP_AFTER="$(docker exec ${WIZARD} cat /shared/.setup-complete 2>/dev/null \
     || echo "{}")"
 [[ "${ONION_AFTER}" == "${ONION_BEFORE}" ]] || fail "onion identity changed after down/up"
 [[ "${SETUP_AFTER}" == "${SETUP_BEFORE}" ]] || fail "setup state changed after down/up"
@@ -72,7 +72,7 @@ done
 [[ "${ready}" == "True" ]] || fail "MCP bot did not return ready within 40s"
 # grep -q exits early on match, which races with docker logs and triggers
 # SIGPIPE (exit 141) under pipefail.  Stash the output first.
-mcp_logs="$(docker logs pureprivacy-mcp --since=2m 2>&1)"
+mcp_logs="$(docker logs ${MCP} --since=2m 2>&1)"
 if ! grep -q "restored session" <<<"${mcp_logs}"; then
     fail "MCP bot did not restore session from disk"
 fi

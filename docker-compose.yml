@@ -12,7 +12,7 @@
 # `pureprivacy_` (volumes/network) so the stack does not collide with anything
 # else running on the same Docker host.
 
-name: pureprivacy
+name: ${COMPOSE_PROJECT_NAME:-pureprivacy}
 
 x-restart: &default-restart
   restart: unless-stopped
@@ -46,7 +46,7 @@ services:
   # Idempotent: subsequent runs are no-ops if the secret files already exist.
   init:
     <<: *default-hardening
-    container_name: pureprivacy-init
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-init
     build:
       context: ./docker/init
     image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-init:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
@@ -58,7 +58,7 @@ services:
 
   tor:
     <<: [*default-restart, *default-hardening, *init-caps]
-    container_name: pureprivacy-tor
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-tor
     build:
       context: ./docker/tor
     image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-tor:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
@@ -79,7 +79,7 @@ services:
 
   privoxy:
     <<: [*default-restart, *default-hardening]
-    container_name: pureprivacy-privoxy
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-privoxy
     build:
       context: ./docker/privoxy
     image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-privoxy:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
@@ -97,7 +97,7 @@ services:
 
   postgres:
     <<: [*default-restart, *default-hardening, *init-caps]
-    container_name: pureprivacy-postgres
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-postgres
     image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
     depends_on:
       init:
@@ -123,7 +123,7 @@ services:
 
   synapse:
     <<: [*default-restart, *default-hardening, *init-caps]
-    container_name: pureprivacy-synapse
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-synapse
     build:
       context: ./docker/synapse
       args:
@@ -140,7 +140,7 @@ services:
       # Federation traffic (and only federation traffic) goes through tor.
       HTTPS_PROXY: "http://privoxy:8118"
       HTTP_PROXY: "http://privoxy:8118"
-      NO_PROXY: "localhost,127.0.0.1,postgres,coturn,wizard,mcp,172.30.0.0/24"
+      NO_PROXY: "localhost,127.0.0.1,postgres,coturn,wizard,mcp,${PUREPRIVACY_SUBNET:-172.30.0.0/24}"
       # Set to 1 by `pureprivacy up --voice`; render_config.py uses it
       # to decide whether to advertise the rtc_foci well-known block.
       # Off by default so non-voice deployments don't tell Element X to
@@ -151,7 +151,7 @@ services:
       - shared:/shared:ro
     networks:
       pureprivacy_net:
-        ipv4_address: 172.30.0.10
+        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.10
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8008/_matrix/client/versions"]
       interval: 10s
@@ -175,7 +175,7 @@ services:
       - SETUID
       - SETGID
       - NET_BIND_SERVICE
-    container_name: pureprivacy-coturn
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-coturn
     build:
       context: ./docker/coturn
     image: ${PUREPRIVACY_REGISTRY:-ghcr.io/jaimetournesol}/pureprivacy-coturn:${PUREPRIVACY_IMAGE_TAG:-0.1.0}
@@ -186,7 +186,7 @@ services:
       - shared:/shared:ro
     networks:
       pureprivacy_net:
-        ipv4_address: 172.30.0.11
+        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.11
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 3478 || exit 1"]
       interval: 10s
@@ -196,7 +196,7 @@ services:
 
   wizard:
     <<: [*default-restart, *default-hardening]
-    container_name: pureprivacy-wizard
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-wizard
     read_only: true
     tmpfs:
       - /tmp
@@ -236,7 +236,7 @@ services:
 
   livekit:
     <<: [*default-restart, *default-hardening]
-    container_name: pureprivacy-livekit
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-livekit
     profiles: ["voice"]
     build:
       context: ./docker/livekit
@@ -248,7 +248,7 @@ services:
       - shared:/shared:ro
     networks:
       pureprivacy_net:
-        ipv4_address: 172.30.0.12
+        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.12
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7880/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -269,7 +269,7 @@ services:
       - SETUID
       - SETGID
       - NET_BIND_SERVICE
-    container_name: pureprivacy-synapse-fed-proxy
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-synapse-fed-proxy
     profiles: ["voice"]
     build:
       context: ./docker/synapse-fed-proxy
@@ -283,7 +283,7 @@ services:
       - shared:/shared
     networks:
       pureprivacy_net:
-        ipv4_address: 172.30.0.13
+        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.13
     healthcheck:
       test: ["CMD-SHELL", "wget -q --no-check-certificate -O- https://localhost/_matrix/client/versions >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -293,7 +293,7 @@ services:
 
   lk-jwt:
     <<: [*default-restart, *default-hardening, *init-caps]
-    container_name: pureprivacy-lk-jwt
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-lk-jwt
     # NOT read_only: the entrypoint appends `<onion> -> fed-proxy IP` to
     # /etc/hosts and runs `update-ca-certificates` to trust the
     # fed-proxy CA. Docker mounts /etc/hosts read-only when the rootfs
@@ -318,7 +318,7 @@ services:
       # Instead the entrypoint installs an /etc/hosts override pointing
       # the .onion at synapse-fed-proxy and trusts that proxy's self-
       # signed CA.  See docker/lk-jwt/entrypoint.sh for the wiring.
-      SYNAPSE_FED_PROXY_IP: 172.30.0.13
+      SYNAPSE_FED_PROXY_IP: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.13
     volumes:
       - shared:/shared:ro
     networks:
@@ -326,7 +326,7 @@ services:
         # Fixed IP so torrc can map HiddenServicePort 8082 to a real
         # address — modern Tor (alpine 3.20+) refuses hostname targets
         # in HiddenServicePort with "Unparseable address".
-        ipv4_address: 172.30.0.14
+        ipv4_address: ${PUREPRIVACY_NET_PREFIX:-172.30.0}.14
     healthcheck:
       # lk-jwt-service binds 8080 by default and has no /healthz; check that
       # the port is open instead.
@@ -338,7 +338,7 @@ services:
 
   mcp:
     <<: [*default-restart, *default-hardening]
-    container_name: pureprivacy-mcp
+    container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-mcp
     read_only: true
     tmpfs:
       - /tmp
@@ -371,11 +371,15 @@ services:
 
 networks:
   pureprivacy_net:
-    name: pureprivacy_net
+    # Default name keeps the single-instance behaviour identical to v0.1.
+    # When running a second instance on the same host, override
+    # COMPOSE_PROJECT_NAME *and* PUREPRIVACY_SUBNET / PUREPRIVACY_NET_PREFIX
+    # so docker doesn't try to bind two networks to the same /24.
+    name: ${COMPOSE_PROJECT_NAME:-pureprivacy}_net
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${PUREPRIVACY_SUBNET:-172.30.0.0/24}
 
 volumes:
   shared:

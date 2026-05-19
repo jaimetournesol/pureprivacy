@@ -1,0 +1,79 @@
+# PurePrivacy tor configuration.
+# Two roles: (1) host the hidden service for inbound client/federation
+# traffic, (2) act as a SOCKS proxy for Synapse's outbound federation.
+
+User tor
+DataDirectory /var/lib/tor
+PidFile /var/lib/tor/tor.pid
+
+# SOCKS proxy reachable from other containers on the pureprivacy_net.
+SocksPort 0.0.0.0:9050
+
+# Hidden service.  Maps the .onion to the in-network services.
+HiddenServiceDir /var/lib/tor/pureprivacy
+HiddenServiceVersion 3
+HiddenServicePort 80   ${PUREPRIVACY_NET_PREFIX}.10:8008
+HiddenServicePort 8008 ${PUREPRIVACY_NET_PREFIX}.10:8008
+HiddenServicePort 8448 ${PUREPRIVACY_NET_PREFIX}.10:8008
+HiddenServicePort 3478 ${PUREPRIVACY_NET_PREFIX}.11:3478
+HiddenServicePort 5349 ${PUREPRIVACY_NET_PREFIX}.11:5349
+# Coturn TCP relay range — every active TURN allocation pins one
+# port in here for ~15 min.  40 ports ≈ 40 concurrent calls; well
+# above what a small-group v0.1 appliance needs and with headroom for
+# slow GC of expired allocations.  THIS RANGE MUST EXACTLY MATCH
+# `min-port` / `max-port` in docker/coturn/turnserver.conf.tmpl —
+# Tor cannot wildcard-map a range.  If you change one file, change the
+# other.
+HiddenServicePort 49152 ${PUREPRIVACY_NET_PREFIX}.11:49152
+HiddenServicePort 49153 ${PUREPRIVACY_NET_PREFIX}.11:49153
+HiddenServicePort 49154 ${PUREPRIVACY_NET_PREFIX}.11:49154
+HiddenServicePort 49155 ${PUREPRIVACY_NET_PREFIX}.11:49155
+HiddenServicePort 49156 ${PUREPRIVACY_NET_PREFIX}.11:49156
+HiddenServicePort 49157 ${PUREPRIVACY_NET_PREFIX}.11:49157
+HiddenServicePort 49158 ${PUREPRIVACY_NET_PREFIX}.11:49158
+HiddenServicePort 49159 ${PUREPRIVACY_NET_PREFIX}.11:49159
+HiddenServicePort 49160 ${PUREPRIVACY_NET_PREFIX}.11:49160
+HiddenServicePort 49161 ${PUREPRIVACY_NET_PREFIX}.11:49161
+HiddenServicePort 49162 ${PUREPRIVACY_NET_PREFIX}.11:49162
+HiddenServicePort 49163 ${PUREPRIVACY_NET_PREFIX}.11:49163
+HiddenServicePort 49164 ${PUREPRIVACY_NET_PREFIX}.11:49164
+HiddenServicePort 49165 ${PUREPRIVACY_NET_PREFIX}.11:49165
+HiddenServicePort 49166 ${PUREPRIVACY_NET_PREFIX}.11:49166
+HiddenServicePort 49167 ${PUREPRIVACY_NET_PREFIX}.11:49167
+HiddenServicePort 49168 ${PUREPRIVACY_NET_PREFIX}.11:49168
+HiddenServicePort 49169 ${PUREPRIVACY_NET_PREFIX}.11:49169
+HiddenServicePort 49170 ${PUREPRIVACY_NET_PREFIX}.11:49170
+HiddenServicePort 49171 ${PUREPRIVACY_NET_PREFIX}.11:49171
+HiddenServicePort 49172 ${PUREPRIVACY_NET_PREFIX}.11:49172
+HiddenServicePort 49173 ${PUREPRIVACY_NET_PREFIX}.11:49173
+HiddenServicePort 49174 ${PUREPRIVACY_NET_PREFIX}.11:49174
+HiddenServicePort 49175 ${PUREPRIVACY_NET_PREFIX}.11:49175
+HiddenServicePort 49176 ${PUREPRIVACY_NET_PREFIX}.11:49176
+HiddenServicePort 49177 ${PUREPRIVACY_NET_PREFIX}.11:49177
+HiddenServicePort 49178 ${PUREPRIVACY_NET_PREFIX}.11:49178
+HiddenServicePort 49179 ${PUREPRIVACY_NET_PREFIX}.11:49179
+HiddenServicePort 49180 ${PUREPRIVACY_NET_PREFIX}.11:49180
+HiddenServicePort 49181 ${PUREPRIVACY_NET_PREFIX}.11:49181
+HiddenServicePort 49182 ${PUREPRIVACY_NET_PREFIX}.11:49182
+HiddenServicePort 49183 ${PUREPRIVACY_NET_PREFIX}.11:49183
+HiddenServicePort 49184 ${PUREPRIVACY_NET_PREFIX}.11:49184
+HiddenServicePort 49185 ${PUREPRIVACY_NET_PREFIX}.11:49185
+HiddenServicePort 49186 ${PUREPRIVACY_NET_PREFIX}.11:49186
+HiddenServicePort 49187 ${PUREPRIVACY_NET_PREFIX}.11:49187
+HiddenServicePort 49188 ${PUREPRIVACY_NET_PREFIX}.11:49188
+HiddenServicePort 49189 ${PUREPRIVACY_NET_PREFIX}.11:49189
+HiddenServicePort 49190 ${PUREPRIVACY_NET_PREFIX}.11:49190
+HiddenServicePort 49191 ${PUREPRIVACY_NET_PREFIX}.11:49191
+# MatrixRTC (only useful when the `voice` profile is active; harmless otherwise).
+HiddenServicePort 7880  ${PUREPRIVACY_NET_PREFIX}.12:7880
+HiddenServicePort 7881  ${PUREPRIVACY_NET_PREFIX}.12:7881
+HiddenServicePort 8082  ${PUREPRIVACY_NET_PREFIX}.14:8080
+# WSS-terminated path to LiveKit through synapse-fed-proxy.  Element
+# Call won't accept ws:// for SFU connections, so fed-proxy terminates
+# TLS with the onion self-signed cert and reverse-proxies the WS
+# upgrade to livekit:7880.  Phones connect to wss://${ONION}:7443
+# (URL handed out by lk-jwt's JWT after the override in its entrypoint).
+HiddenServicePort 7443  ${PUREPRIVACY_NET_PREFIX}.13:7443
+
+Log notice stdout
+SafeLogging 1

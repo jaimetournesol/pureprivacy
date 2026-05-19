@@ -85,7 +85,6 @@ else
     _host_path() { echo "$1"; }
 fi
 
-PROJECT="pureprivacy"
 # Resolve through symlinks so `pureprivacy` works whether you call it as
 # ./scripts/pureprivacy or via a symlink on $PATH. Prefer GNU readlink
 # (Linux); fall back to Python (macOS / BSD readlink lacks -f); finally
@@ -94,6 +93,41 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
     || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
     || echo "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+
+# Pick up per-instance overrides from .env so a second working copy
+# under a different COMPOSE_PROJECT_NAME / WIZARD_PORT / MCP_PORT
+# behaves correctly when its operator invokes ./scripts/pureprivacy.
+# (docker compose auto-loads .env for compose calls already; this
+# pulls the same values into the script's own shell.)
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${ROOT_DIR}/.env"
+    set +a
+fi
+
+PROJECT="${COMPOSE_PROJECT_NAME:-pureprivacy}"
+WIZARD_PORT="${WIZARD_PORT:-8088}"
+MCP_PORT="${MCP_PORT:-8089}"
+WIZARD_URL="http://127.0.0.1:${WIZARD_PORT}"
+MCP_URL="http://127.0.0.1:${MCP_PORT}"
+# Container names follow `${PROJECT}-${service}` per docker-compose.yml's
+# `container_name:` lines.  Exporting one variable per container lets the
+# script keep its `docker exec ${TOR} …` style without hardcoding the
+# default project name — `pureprivacy info` etc. now work for a second
+# instance the operator brings up under a different COMPOSE_PROJECT_NAME.
+export COMPOSE_PROJECT_NAME="${PROJECT}"
+INIT="${PROJECT}-init"
+TOR="${PROJECT}-tor"
+PRIVOXY="${PROJECT}-privoxy"
+POSTGRES="${PROJECT}-postgres"
+SYNAPSE="${PROJECT}-synapse"
+COTURN="${PROJECT}-coturn"
+WIZARD="${PROJECT}-wizard"
+LIVEKIT="${PROJECT}-livekit"
+LK_JWT="${PROJECT}-lk-jwt"
+SYNAPSE_FED_PROXY="${PROJECT}-synapse-fed-proxy"
+MCP="${PROJECT}-mcp"
 # Long-running services we monitor for health.  `init` is a one-shot we
 # don't tail because it has no healthcheck and exits 0 on purpose.
 SERVICES=(tor privoxy postgres synapse coturn wizard mcp)
@@ -263,7 +297,7 @@ cmd_up() {
     local _image_tag="${PUREPRIVACY_IMAGE_TAG:-0.1.0}"
     local first_run="false"
     if ! docker image inspect \
-            "${_registry}/pureprivacy-synapse:${_image_tag}" \
+            "${_registry}/${SYNAPSE}:${_image_tag}" \
             "pureprivacy/synapse:0.1.0" >/dev/null 2>&1; then
         first_run="true"
     fi
@@ -396,10 +430,10 @@ cmd_status() {
     done
 
     local onion="" setup_state="pending"
-    if docker exec pureprivacy-tor test -s /shared/onion_hostname 2>/dev/null; then
-        onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    if docker exec ${TOR} test -s /shared/onion_hostname 2>/dev/null; then
+        onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null)"
     fi
-    if docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null; then
+    if docker exec ${WIZARD} test -f /shared/.setup-complete 2>/dev/null; then
         setup_state="complete"
     fi
 
@@ -418,13 +452,13 @@ cmd_status() {
         'table {{.Name}}\t{{.Status}}\t{{.Service}}'
     if [[ "${setup_state}" == "pending" ]]; then
         echo
-        yellow "Setup pending — open http://127.0.0.1:8088"
+        yellow "Setup pending — open ${WIZARD_URL}"
     fi
 }
 
 peer_count() {
     # Number of paired federation peers, or 0 if pairings.json is absent.
-    docker exec pureprivacy-wizard python3 -c '
+    docker exec ${WIZARD} python3 -c '
 import json, sys
 try:
     print(len(json.load(open("/shared/pairings.json")).get("peers", [])))
@@ -442,7 +476,7 @@ cmd_info() {
             *) red "unknown flag: $1"; exit 2 ;;
         esac
     done
-    if ! docker exec pureprivacy-tor test -s /shared/onion_hostname 2>/dev/null; then
+    if ! docker exec ${TOR} test -s /shared/onion_hostname 2>/dev/null; then
         yellow "PurePrivacy is starting.  Run \`pureprivacy status\` again in a moment."
         return
     fi
@@ -454,32 +488,32 @@ cmd_info() {
         # else: setup not done; fall through to the normal info screen
     fi
     local onion
-    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null)"
     local livekit_up="false"
     [[ "$(container_running livekit)" == "true" ]] && livekit_up="true"
 
-    if docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null; then
+    if docker exec ${WIZARD} test -f /shared/.setup-complete 2>/dev/null; then
         local peers
         peers="$(peer_count)"
         bold "Your PurePrivacy box is ready."
         echo "  Onion:        http://${onion}"
-        echo "  Setup info:   http://127.0.0.1:8088  (admin credentials, QR, MCP token)"
+        echo "  Setup info:   ${WIZARD_URL}  (admin credentials, QR, MCP token)"
         if [[ "${peers}" -eq 0 ]]; then
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (no peers paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (no peers paired)"
         elif [[ "${peers}" -eq 1 ]]; then
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (1 peer paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (1 peer paired)"
         else
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (${peers} peers paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (${peers} peers paired)"
         fi
-        echo "  MCP endpoint: http://127.0.0.1:8089/mcp"
+        echo "  MCP endpoint: ${MCP_URL}/mcp"
         if [[ "${livekit_up}" == "true" ]]; then
             echo "  Group voice:  enabled (Tor — via synapse-fed-proxy)"
         fi
     else
         bold "PurePrivacy is up.  Finish setup at:"
-        echo "  http://127.0.0.1:8088"
+        echo "  ${WIZARD_URL}"
         local setup_token
-        setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
+        setup_token="$(docker exec ${WIZARD} cat /shared/secrets/setup_token 2>/dev/null \
             | tr -d '[:space:]' || true)"
         # Min-length sanity: token_hex(16) → 32 chars.  Anything shorter
         # is almost certainly an empty-file or stale read; better to omit
@@ -522,7 +556,7 @@ EOF
 wizard_python() {
     # Run a python -c snippet inside the wizard container and return stdout.
     # The snippet is read from stdin so we don't have to escape arguments.
-    docker exec -i pureprivacy-wizard python3 -
+    docker exec -i ${WIZARD} python3 -
 }
 
 render_qr_ansi() {
@@ -530,7 +564,7 @@ render_qr_ansi() {
     # qrcode library.  Output is colour-aware (block characters); falls back
     # gracefully on non-truecolor terminals.
     local data="$1"
-    docker exec -i pureprivacy-wizard python3 -c '
+    docker exec -i ${WIZARD} python3 -c '
 import sys, qrcode
 qr = qrcode.QRCode(box_size=1, border=1)
 qr.add_data(sys.stdin.read().rstrip("\n"))
@@ -540,7 +574,7 @@ qr.print_ascii(invert=True)
 }
 
 setup_complete() {
-    docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null
+    docker exec ${WIZARD} test -f /shared/.setup-complete 2>/dev/null
 }
 
 read_setup_field() {
@@ -549,7 +583,7 @@ read_setup_field() {
     # `key` is controlled by callers — only known field names — so embedding
     # it directly in the python literal is safe.
     local key="$1"
-    docker exec pureprivacy-wizard python3 -c "
+    docker exec ${WIZARD} python3 -c "
 import json
 try:
     d = json.load(open('/shared/.setup-complete'))
@@ -561,7 +595,7 @@ except FileNotFoundError:
 
 read_mcp_token() {
     local t
-    t="$(docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token 2>/dev/null \
+    t="$(docker exec ${WIZARD} cat /shared/secrets/mcp_bearer_token 2>/dev/null \
         | tr -d '[:space:]' || true)"
     if [[ -z "${t}" ]]; then
         return 1
@@ -576,7 +610,7 @@ print_setup_summary_minimal() {
     # by default — pass --verbose to fall back to the everything-on-one-
     # screen `print_setup_summary` instead.
     local onion wizard_url
-    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null)"
     wizard_url="http://127.0.0.1:${WIZARD_PORT:-8088}"
 
     echo
@@ -600,7 +634,7 @@ print_setup_summary() {
     # `info --secrets`, not from the default `info`.
     local include_secrets="${1:-true}"
     local onion admin_user admin_password mcp_user mcp_token recovery
-    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null)"
     admin_user="$(read_setup_field admin_user)"
     admin_password="$(read_setup_field admin_password)"
     mcp_user="$(read_setup_field mcp_user)"
@@ -625,7 +659,7 @@ print_setup_summary() {
         echo
     fi
     bold "Agent (MCP)"
-    echo "  Endpoint:    http://127.0.0.1:8089/mcp"
+    echo "  Endpoint:    ${MCP_URL}/mcp"
     if [[ "${include_secrets}" == "true" ]]; then
         echo "  Bearer:      ${mcp_token}"
     else
@@ -634,7 +668,7 @@ print_setup_summary() {
     echo "  Bot user:    ${mcp_user}"
     if [[ "${include_secrets}" == "true" ]]; then
         echo
-        echo "  Claude Code: claude mcp add pureprivacy http://127.0.0.1:8089/mcp \\"
+        echo "  Claude Code: claude mcp add pureprivacy ${MCP_URL}/mcp \\"
         echo "                 --transport http \\"
         echo "                 --header \"Authorization: Bearer ${mcp_token}\""
     fi
@@ -649,7 +683,7 @@ print_setup_summary() {
 admin_cli() {
     # Run wizard.admin_cli inside the wizard container.  All output passes
     # through verbatim so the caller can json-parse stdout.
-    docker exec pureprivacy-wizard python3 -m wizard.admin_cli "$@"
+    docker exec ${WIZARD} python3 -m wizard.admin_cli "$@"
 }
 
 cli_token() {
@@ -659,10 +693,10 @@ cli_token() {
     # Empty token = wizard not yet up; refuse rather than send "" and get
     # an opaque 403 response back.
     local t
-    t="$(docker exec pureprivacy-wizard cat /shared/secrets/cli_token 2>/dev/null \
+    t="$(docker exec ${WIZARD} cat /shared/secrets/cli_token 2>/dev/null \
         | tr -d '[:space:]' || true)"
     if [[ -z "${t}" ]]; then
-        red "Could not read /shared/secrets/cli_token from pureprivacy-wizard." >&2
+        red "Could not read /shared/secrets/cli_token from ${WIZARD}." >&2
         red "Is the wizard container up?  Try \`pureprivacy status\`." >&2
         return 1
     fi
@@ -869,7 +903,7 @@ else:
             trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
-                -X POST http://127.0.0.1:8088/pair/accept \
+                -X POST ${WIZARD_URL}/pair/accept \
                 -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
                 --data-urlencode "pair_code=${code}")"
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
@@ -895,7 +929,7 @@ else:
             trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
-                -X POST http://127.0.0.1:8088/pair/remove \
+                -X POST ${WIZARD_URL}/pair/remove \
                 -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
                 --data-urlencode "onion=${onion}")"
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
@@ -926,6 +960,7 @@ cmd_init() {
     maybe_help "$@"
     ensure_docker
     local voice="false"
+    local dev="false"
     local admin_user="" admin_password=""
     local non_interactive="false"
     # --verbose: print every secret inline at the end (old behavior).
@@ -935,6 +970,7 @@ cmd_init() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --voice) voice="true"; shift ;;
+            --dev) dev="true"; shift ;;
             --admin-user) admin_user="$2"; shift 2 ;;
             --admin-password) admin_password="$2"; shift 2 ;;
             -y|--yes|--non-interactive) non_interactive="true"; shift ;;
@@ -943,8 +979,11 @@ cmd_init() {
         esac
     done
 
-    if [[ "${voice}" == "true" ]]; then
-        cmd_up --voice
+    local up_args=()
+    [[ "${voice}" == "true" ]] && up_args+=(--voice)
+    [[ "${dev}"   == "true" ]] && up_args+=(--dev)
+    if [[ ${#up_args[@]} -gt 0 ]]; then
+        cmd_up "${up_args[@]}"
     else
         cmd_up
     fi
@@ -963,18 +1002,18 @@ cmd_init() {
     bold "Waiting for the wizard to come online..."
     local deadline=$((SECONDS + 120))
     while [[ ${SECONDS} -lt ${deadline} ]]; do
-        if curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+        if curl -fsS ${WIZARD_URL}/healthz >/dev/null 2>&1; then
             break
         fi
         sleep 2
     done
-    if ! curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+    if ! curl -fsS ${WIZARD_URL}/healthz >/dev/null 2>&1; then
         red "Wizard did not come online within 120s.  Run \`pureprivacy logs wizard\`."
         exit 1
     fi
 
     local onion=""
-    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null || true)"
+    onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null || true)"
     if [[ -z "${onion}" ]]; then
         red "Tor onion is not yet published.  Wait a few seconds and re-run."
         exit 1
@@ -1033,7 +1072,7 @@ PY
     # We read it through docker exec — the operator can't paste it via
     # the CLI flow, but they're authenticated through the host shell.
     local setup_token
-    setup_token="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null \
+    setup_token="$(docker exec ${WIZARD} cat /shared/secrets/setup_token 2>/dev/null \
         | tr -d '[:space:]' || true)"
     if [[ -z "${setup_token}" ]] || [[ ${#setup_token} -lt 32 ]]; then
         red "Setup token not found (or unreadably short) at /shared/secrets/setup_token."
@@ -1045,7 +1084,7 @@ PY
     trap 'rm -f "${body_path}"' EXIT
     local code
     code="$(curl -s -o "${body_path}" -w '%{http_code}' \
-        -X POST http://127.0.0.1:8088/setup \
+        -X POST ${WIZARD_URL}/setup \
         --data-urlencode "setup_token=${setup_token}" \
         --data-urlencode "admin_username=${admin_user}" \
         --data-urlencode "admin_password=${admin_password}")"
@@ -1103,20 +1142,20 @@ cmd_doctor() {
   containers: {{len .Containers}}'
     echo
     echo "tor onion:"
-    docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null \
+    docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null \
         | sed 's/^/  /' || yellow "  not yet published"
     echo
     echo "synapse client API:"
-    docker exec pureprivacy-synapse \
+    docker exec ${SYNAPSE} \
         curl -fsS http://localhost:8008/_matrix/client/versions 2>/dev/null \
         | head -c 80 || yellow "  unreachable"
     echo
     echo "wizard:"
-    curl -fsS http://127.0.0.1:8088/healthz 2>/dev/null | sed 's/^/  /' \
+    curl -fsS ${WIZARD_URL}/healthz 2>/dev/null | sed 's/^/  /' \
         || yellow "  unreachable"
     echo
     echo "mcp:"
-    curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null | sed 's/^/  /' \
+    curl -fsS ${MCP_URL}/healthz 2>/dev/null | sed 's/^/  /' \
         || yellow "  unreachable"
 }
 
@@ -1148,22 +1187,22 @@ cmd_verify() {
     check "tor container running" \
         bash -c "[[ \$(container_running tor) == 'true' ]]"
     check "tor onion published" \
-        docker exec pureprivacy-tor test -s /shared/onion_hostname
+        docker exec ${TOR} test -s /shared/onion_hostname
     check "synapse healthy" \
         bash -c "[[ \$(container_health synapse) == 'healthy' ]]"
     check "synapse client API" \
-        docker exec pureprivacy-synapse curl -fsS \
+        docker exec ${SYNAPSE} curl -fsS \
             http://localhost:8008/_matrix/client/versions
     check "wizard /healthz" \
-        curl -fsS http://127.0.0.1:8088/healthz
+        curl -fsS ${WIZARD_URL}/healthz
     check "mcp /healthz" \
-        curl -fsS http://127.0.0.1:8089/healthz
+        curl -fsS ${MCP_URL}/healthz
 
     if setup_complete; then
         check "setup complete" true
         # Bot readiness lives in the MCP /healthz JSON; parse it.
         local bot_ready
-        bot_ready="$(curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null \
+        bot_ready="$(curl -fsS ${MCP_URL}/healthz 2>/dev/null \
             | python3 -c 'import json,sys;d=json.load(sys.stdin);print("ok" if d.get("matrix_bot_ready") else "no")' 2>/dev/null)"
         printf "  %-40s " "mcp bot logged in to synapse"
         if [[ "${bot_ready}" == "ok" ]]; then
@@ -1175,17 +1214,17 @@ cmd_verify() {
         fi
     else
         printf "  %-40s " "setup complete"
-        yellow "pending — run \`pureprivacy init\` or open http://127.0.0.1:8088"
+        yellow "pending — run \`pureprivacy init\` or open ${WIZARD_URL}"
     fi
 
     # Self-resolve the .onion through the box's own Tor SOCKS proxy to prove
     # the homeserver is actually reachable from outside the docker network
     # path (this is what your phone over Orbot/Onion Browser will do).
     local onion
-    onion="$(docker exec pureprivacy-tor cat /shared/onion_hostname 2>/dev/null)"
+    onion="$(docker exec ${TOR} cat /shared/onion_hostname 2>/dev/null)"
     if [[ -n "${onion}" ]]; then
         printf "  %-40s " "synapse reachable via tor SOCKS"
-        if docker exec pureprivacy-tor sh -c \
+        if docker exec ${TOR} sh -c \
             "command -v curl >/dev/null && curl -fsS --socks5-hostname 127.0.0.1:9050 'http://${onion}/_matrix/client/versions'" \
             >/dev/null 2>&1; then
             green "ok"
@@ -1276,7 +1315,7 @@ cmd_backup() {
     # turns SIGPIPE on grep's early exit into a script-killing exit 141.
     local _running_names
     _running_names="$(docker ps --format '{{.Names}}')"
-    if grep -q "^pureprivacy-postgres$" <<<"${_running_names}"; then
+    if grep -q "^${POSTGRES}$" <<<"${_running_names}"; then
         was_running="true"
         cmd_stop
     fi

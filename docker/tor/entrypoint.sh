@@ -13,6 +13,17 @@ chmod 0700 "${HSDIR}"
 
 mkdir -p "${SHARED}"
 
+# Render torrc from the template on every boot.  HiddenServicePort lines
+# carry literal container IPs, so a second instance running on a
+# different docker subnet (PUREPRIVACY_NET_PREFIX != 172.30.0) needs its
+# own torrc with its own targets.  envsubst keeps the template static
+# in-image and lets a single compose file serve any subnet.
+export PUREPRIVACY_NET_PREFIX="${PUREPRIVACY_NET_PREFIX:-172.30.0}"
+envsubst '${PUREPRIVACY_NET_PREFIX}' \
+    < /etc/tor/torrc.tmpl \
+    > /etc/tor/torrc
+chmod 0644 /etc/tor/torrc
+
 start_publisher() {
     # Wait for tor to mint the hostname, then copy it to the shared volume.
     # Re-run on each container start to keep the file fresh even if it was
