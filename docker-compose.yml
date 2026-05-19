@@ -202,7 +202,6 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
       - net.ipv6.conf.default.disable_ipv6=0
-      - net.ipv6.conf.eth0.disable_ipv6=0
     container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-coturn
     build:
       context: ./docker/coturn
@@ -451,9 +450,16 @@ networks:
     # so docker doesn't try to bind two networks to the same /24.
     name: ${COMPOSE_PROJECT_NAME:-pureprivacy}_net
     driver: bridge
+    # Enabling IPv6 on the bridge is necessary for the cross-instance
+    # voice spike (docs/turn-udp-tor-shim.md) — Docker disables IPv6
+    # on container interfaces by default, which makes coturn's
+    # OnionCat IPv6 bind() fail.  The fd00:: subnet is just so Docker
+    # accepts the IPv6 config; nothing actually routes through it.
+    enable_ipv6: true
     ipam:
       config:
         - subnet: ${PUREPRIVACY_SUBNET:-172.30.0.0/24}
+        - subnet: ${PUREPRIVACY_SUBNET_V6:-fd00:cafe:beef::/64}
 
 volumes:
   shared:
