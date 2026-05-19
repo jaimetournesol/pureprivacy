@@ -188,6 +188,14 @@ services:
       # Harmless when the udprelay profile is off — the address simply
       # isn't used by anything.
       - NET_ADMIN
+    # Override default-hardening's no-new-privileges so NET_ADMIN
+    # actually propagates from the bash entrypoint to /sbin/ip at
+    # exec time.  Without this, even with the cap in the bounding
+    # set, RTNETLINK rejects the ADDR_ADD with EPERM.  This *only*
+    # widens privs for execs from inside the container; cap_drop:ALL
+    # still keeps the effective set tight.
+    security_opt:
+      - no-new-privileges:false
     container_name: ${COMPOSE_PROJECT_NAME:-pureprivacy}-coturn
     build:
       context: ./docker/coturn
