@@ -14,7 +14,7 @@ FROM alpine:3.20
 # iproute2 supplies `ip` for TUN address + link config; tini reaps the
 # few sh subprocesses we exec.  No netcat needed — the shim's TCP/UDP
 # both go through Go stdlib.
-RUN apk add --no-cache iproute2 tini
+RUN apk add --no-cache iproute2 netcat-openbsd tini
 COPY --from=build /udprelay /usr/local/bin/udprelay
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
