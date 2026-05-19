@@ -17,9 +17,17 @@ tls-listening-port=5349
 min-port=49152
 max-port=49191
 
-# We don't have a real public IP — coturn's external-ip is the .onion
-# hostname so client SDP advertises the right address.
-external-ip=${SERVER_NAME}
+# external-ip and relay-ip both point at the OnionCat IPv6 derived
+# from this box's onion (see docker/tor/entrypoint.sh).  external-ip
+# is what coturn puts in the RELAY-ADDRESS attribute clients hand to
+# their peers via SDP; relay-ip is what coturn actually binds relay
+# sockets on, so outbound packets carry the IPv6 as source.  Together
+# these make the cross-instance voice path work: the peer's coturn
+# sends UDP to this address, the kernel routes via the OnionCat /48
+# onlink route to the udprelay sidecar's TUN, and udprelay ships it
+# over Tor.  See docs/turn-udp-tor-shim.md.
+external-ip=${ONIONCAT_IPV6}
+relay-ip=${ONIONCAT_IPV6}
 
 # Authentication: long-term shared secret, the same one Synapse advertises
 # to clients via /voip/turnServer.  Synapse signs short-lived TURN credentials
