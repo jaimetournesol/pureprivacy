@@ -30,8 +30,8 @@ ADMIN_PASS="${ADMIN_PASS:-test-password-12345}"
 # If setup is already complete with a different password (e.g. the feature
 # tests rotated it via the recovery-key flow), trust the on-disk value so
 # this script remains idempotent.
-if docker exec pureprivacy-wizard test -f /shared/.setup-complete 2>/dev/null; then
-    LIVE_PASS="$(docker exec pureprivacy-wizard python3 -c '
+if docker exec ${WIZARD} test -f /shared/.setup-complete 2>/dev/null; then
+    LIVE_PASS="$(docker exec ${WIZARD} python3 -c '
 import json
 try:
     print(json.load(open("/shared/.setup-complete"))["admin_password"])
@@ -83,22 +83,22 @@ green "  stack healthy"
 # Step 2: wizard.  Idempotent — POST is a no-op if already complete.
 # ---------------------------------------------------------------------------
 step "ensuring wizard setup is complete"
-if docker exec pureprivacy-wizard test -f /shared/.setup-complete; then
+if docker exec ${WIZARD} test -f /shared/.setup-complete; then
     green "  setup already complete — skipping POST"
 else
-    SETUP_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/setup_token 2>/dev/null | tr -d '[:space:]')"
+    SETUP_TOKEN="$(docker exec ${WIZARD} cat /shared/secrets/setup_token 2>/dev/null | tr -d '[:space:]')"
     [[ -n "${SETUP_TOKEN}" ]] || fail "no /shared/secrets/setup_token; wizard not yet started?"
     curl -fsS -X POST http://127.0.0.1:8088/setup \
         --data-urlencode "setup_token=${SETUP_TOKEN}" \
         --data-urlencode "admin_username=${ADMIN_USER}" \
         --data-urlencode "admin_password=${ADMIN_PASS}" \
         -o /dev/null
-    docker exec pureprivacy-wizard test -f /shared/.setup-complete \
+    docker exec ${WIZARD} test -f /shared/.setup-complete \
         || fail "wizard did not write .setup-complete"
     green "  wizard ran successfully"
 fi
 
-ONION="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
+ONION="$(docker exec ${TOR} cat /shared/onion_hostname)"
 [[ -n "${ONION}" ]] || fail "no onion hostname"
 green "  onion = ${ONION}"
 
@@ -106,7 +106,7 @@ green "  onion = ${ONION}"
 # Step 3: admin can log in to Synapse client API.
 # ---------------------------------------------------------------------------
 step "logging in as admin via Synapse client API"
-LOGIN_JSON="$(docker exec pureprivacy-synapse curl -fsS -X POST \
+LOGIN_JSON="$(docker exec ${SYNAPSE} curl -fsS -X POST \
     http://localhost:8008/_matrix/client/r0/login \
     --data-binary "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}")"
 ADMIN_TOKEN="$(echo "${LOGIN_JSON}" | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
@@ -117,8 +117,8 @@ green "  admin token obtained"
 # Step 4: create a room and invite the bot.
 # ---------------------------------------------------------------------------
 step "creating a test room and inviting the bot"
-BOT_ID="@pureprivacy-mcp:${ONION}"
-ROOM_JSON="$(docker exec pureprivacy-synapse curl -fsS -X POST \
+BOT_ID="@${MCP}:${ONION}"
+ROOM_JSON="$(docker exec ${SYNAPSE} curl -fsS -X POST \
     "http://localhost:8008/_matrix/client/r0/createRoom?access_token=${ADMIN_TOKEN}" \
     --data-binary "{\"name\":\"e2e-test-$$\",\"invite\":[\"${BOT_ID}\"]}")"
 ROOM_ID="$(echo "${ROOM_JSON}" | python3 -c 'import sys, json; print(json.load(sys.stdin)["room_id"])')"
@@ -129,10 +129,10 @@ green "  room = ${ROOM_ID}"
 # Step 5: wait for the bot to auto-join.
 # ---------------------------------------------------------------------------
 step "waiting for the bot to auto-accept the invite"
-TOKEN="$(docker exec pureprivacy-mcp cat /shared/secrets/mcp_bearer_token)"
+TOKEN="$(docker exec ${MCP} cat /shared/secrets/mcp_bearer_token)"
 for attempt in $(seq 1 15); do
     sleep 2
-    members="$(docker exec pureprivacy-synapse curl -fsS \
+    members="$(docker exec ${SYNAPSE} curl -fsS \
         "http://localhost:8008/_matrix/client/r0/rooms/${ROOM_ID}/joined_members?access_token=${ADMIN_TOKEN}" \
         | python3 -c 'import sys, json; print(",".join(json.load(sys.stdin)["joined"]))')"
     if [[ "${members}" == *"${BOT_ID}"* ]]; then
@@ -211,7 +211,7 @@ green "  message sent, event = ${EVENT_ID}"
 # ---------------------------------------------------------------------------
 step "verifying the message reached Synapse"
 sleep 2
-ROOM_MSG_JSON="$(docker exec pureprivacy-synapse curl -fsS \
+ROOM_MSG_JSON="$(docker exec ${SYNAPSE} curl -fsS \
     "http://localhost:8008/_matrix/client/r0/rooms/${ROOM_ID}/messages?access_token=${ADMIN_TOKEN}&limit=20&dir=b")"
 FOUND="$(echo "${ROOM_MSG_JSON}" | python3 -c "
 import sys, json

@@ -38,16 +38,16 @@ require_command docker
 
 step "ensuring stack is up + setup is complete"
 ./scripts/pureprivacy up >/dev/null
-docker exec pureprivacy-wizard test -f /shared/.setup-complete \
+docker exec ${WIZARD} test -f /shared/.setup-complete \
     || fail "setup not complete; run scripts/test-e2e.sh first"
 
-ONION="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
+ONION="$(docker exec ${TOR} cat /shared/onion_hostname)"
 green "  onion = ${ONION}"
 
 # The wizard now gates state-changing routes behind cookie auth (admin
 # password) OR a CLI-token header.  The CLI and these tests use the latter.
 # See wizard/auth.py.
-CLI_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/cli_token \
+CLI_TOKEN="$(docker exec ${WIZARD} cat /shared/secrets/cli_token \
     | tr -d '[:space:]')"
 [[ -n "${CLI_TOKEN}" ]] || fail "wizard did not mint a cli_token at startup"
 
@@ -55,18 +55,18 @@ CLI_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/cli_token \
 # Test 1: MCP token rotation grace window
 # =========================================================================
 step "MCP token rotation: capture old token"
-OLD_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token | tr -d '[:space:]')"
+OLD_TOKEN="$(docker exec ${WIZARD} cat /shared/secrets/mcp_bearer_token | tr -d '[:space:]')"
 [[ -n "${OLD_TOKEN}" ]] || fail "no MCP token on disk"
 
 step "MCP token rotation: hit /rotate-token"
 curl -fsS -X POST http://127.0.0.1:8088/rotate-token \
     -H "X-PurePrivacy-CLI-Token: ${CLI_TOKEN}" -o /dev/null
-NEW_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token | tr -d '[:space:]')"
+NEW_TOKEN="$(docker exec ${WIZARD} cat /shared/secrets/mcp_bearer_token | tr -d '[:space:]')"
 [[ "${NEW_TOKEN}" != "${OLD_TOKEN}" ]] || fail "token did not change after rotate"
 [[ -n "${NEW_TOKEN}" ]] || fail "new token is empty"
 
 step "MCP token rotation: .prev exists with old token"
-PREV_TOKEN="$(docker exec pureprivacy-wizard cat /shared/secrets/mcp_bearer_token.prev | tr -d '[:space:]')"
+PREV_TOKEN="$(docker exec ${WIZARD} cat /shared/secrets/mcp_bearer_token.prev | tr -d '[:space:]')"
 [[ "${PREV_TOKEN}" == "${OLD_TOKEN}" ]] || fail ".prev does not match old token"
 
 step "MCP token rotation: both new and old tokens accepted (grace window)"
@@ -93,7 +93,7 @@ green "  new + old both accepted within grace window"
 step "MCP token rotation: revoke /prev immediately"
 curl -fsS -X POST http://127.0.0.1:8088/revoke-prev-token \
     -H "X-PurePrivacy-CLI-Token: ${CLI_TOKEN}" -o /dev/null
-docker exec pureprivacy-wizard test -f /shared/secrets/mcp_bearer_token.prev \
+docker exec ${WIZARD} test -f /shared/secrets/mcp_bearer_token.prev \
     && fail ".prev should have been deleted"
 OLD_CODE="$(mcp_call_token "${OLD_TOKEN}")"
 [[ "${OLD_CODE}" == "403" ]] || fail "old token still accepted after revoke (HTTP ${OLD_CODE})"
@@ -114,7 +114,7 @@ green "  info covers onion / MCP / wizard / pair"
 
 step "pureprivacy info --secrets reveals admin password + bearer"
 SECRETS_OUT="$(./scripts/pureprivacy info --secrets 2>&1)"
-ADMIN_PW="$(docker exec pureprivacy-wizard python3 -c 'import json;print(json.load(open("/shared/.setup-complete"))["admin_password"])')"
+ADMIN_PW="$(docker exec ${WIZARD} python3 -c 'import json;print(json.load(open("/shared/.setup-complete"))["admin_password"])')"
 [[ "${SECRETS_OUT}" == *"${ADMIN_PW}"* ]] || fail "info --secrets did not reveal admin password"
 [[ "${SECRETS_OUT}" == *"${NEW_TOKEN}"* ]] || fail "info --secrets did not reveal new MCP token"
 green "  info --secrets reveals secrets"
@@ -125,7 +125,7 @@ green "  info --secrets reveals secrets"
 step "pureprivacy user list: at least admin + bot"
 USER_LIST="$(./scripts/pureprivacy user list 2>&1)"
 [[ "${USER_LIST}" == *"admin:"* ]] || fail "user list missing admin (got: ${USER_LIST:0:200})"
-[[ "${USER_LIST}" == *"pureprivacy-mcp"* ]] || fail "user list missing mcp bot"
+[[ "${USER_LIST}" == *"${MCP}"* ]] || fail "user list missing mcp bot"
 green "  user list ok"
 
 TEST_USER="alice-feature-$$"
@@ -161,7 +161,7 @@ else
 fi
 
 step "pureprivacy user remove refuses to deactivate the MCP bot"
-BOT_RM_OUT="$(./scripts/pureprivacy user remove pureprivacy-mcp 2>&1 || true)"
+BOT_RM_OUT="$(./scripts/pureprivacy user remove ${MCP} 2>&1 || true)"
 if [[ "${BOT_RM_OUT}" == *"refusing to deactivate the MCP bot"* ]]; then
     green "  MCP bot removal refused (expected)"
 else
@@ -195,17 +195,17 @@ PY
 )"
 
 # Capture Synapse start time before pair to verify restart actually happens.
-SYNAPSE_START_BEFORE="$(docker inspect -f '{{.State.StartedAt}}' pureprivacy-synapse)"
+SYNAPSE_START_BEFORE="$(docker inspect -f '{{.State.StartedAt}}' ${SYNAPSE})"
 ACCEPT_OUT="$(./scripts/pureprivacy pair accept "${FAKE_CODE}" 2>&1)"
 [[ "${ACCEPT_OUT}" == *"Paired and Synapse restarted"* ]] \
     || fail "pair accept did not confirm restart (got: ${ACCEPT_OUT:0:300})"
-SYNAPSE_START_AFTER="$(docker inspect -f '{{.State.StartedAt}}' pureprivacy-synapse)"
+SYNAPSE_START_AFTER="$(docker inspect -f '{{.State.StartedAt}}' ${SYNAPSE})"
 [[ "${SYNAPSE_START_BEFORE}" != "${SYNAPSE_START_AFTER}" ]] \
     || fail "Synapse StartedAt unchanged — restart didn't happen"
 green "  pair accept restarted Synapse"
 
 step "homeserver.yaml now whitelists the fake onion"
-HS_YAML="$(docker exec pureprivacy-synapse cat /data/homeserver.yaml)"
+HS_YAML="$(docker exec ${SYNAPSE} cat /data/homeserver.yaml)"
 [[ "${HS_YAML}" == *"${FAKE_ONION}"* ]] \
     || fail "homeserver.yaml does not contain the new peer in its federation_domain_whitelist"
 [[ "${HS_YAML}" == *"federation_certificate_verification_whitelist:"*"${FAKE_ONION}"* ]] \
@@ -218,13 +218,13 @@ LIST_OUT="$(./scripts/pureprivacy pair list 2>&1)"
     || fail "pair list missing fake onion (got: ${LIST_OUT})"
 
 step "pair remove also restarts Synapse"
-SYNAPSE_START_BEFORE="$(docker inspect -f '{{.State.StartedAt}}' pureprivacy-synapse)"
+SYNAPSE_START_BEFORE="$(docker inspect -f '{{.State.StartedAt}}' ${SYNAPSE})"
 RM_OUT="$(./scripts/pureprivacy pair remove "${FAKE_ONION}" 2>&1)"
 [[ "${RM_OUT}" == *"Unpaired"* ]] || fail "pair remove did not confirm"
-SYNAPSE_START_AFTER="$(docker inspect -f '{{.State.StartedAt}}' pureprivacy-synapse)"
+SYNAPSE_START_AFTER="$(docker inspect -f '{{.State.StartedAt}}' ${SYNAPSE})"
 [[ "${SYNAPSE_START_BEFORE}" != "${SYNAPSE_START_AFTER}" ]] \
     || fail "Synapse did not restart on pair remove"
-HS_YAML_AFTER="$(docker exec pureprivacy-synapse cat /data/homeserver.yaml)"
+HS_YAML_AFTER="$(docker exec ${SYNAPSE} cat /data/homeserver.yaml)"
 [[ "${HS_YAML_AFTER}" != *"${FAKE_ONION}"* ]] \
     || fail "fake onion still in federation_domain_whitelist after remove"
 green "  pair remove cleaned up homeserver.yaml + restarted"
@@ -273,7 +273,7 @@ PEOPLE_HTML="$(curl -fsS http://127.0.0.1:8088/people \
 [[ "${PEOPLE_HTML}" == *"People on this box"* ]] \
     || [[ "${PEOPLE_HTML}" == *"Friends on this box"* ]] \
     || fail "/people did not render the people/friends page"
-[[ "${PEOPLE_HTML}" == *"pureprivacy-mcp"* ]] \
+[[ "${PEOPLE_HTML}" == *"${MCP}"* ]] \
     || fail "/people did not list the MCP bot"
 green "  /people GET works with CLI token"
 
@@ -301,7 +301,7 @@ RM_HTTP="$(curl -s -o /dev/null -w '%{http_code}' \
     || fail "expected 303 from /people/{name}/remove, got ${RM_HTTP}"
 
 step "wizard /people refuses to deactivate the admin"
-ADMIN_LP="$(docker exec pureprivacy-wizard python3 -c '
+ADMIN_LP="$(docker exec ${WIZARD} python3 -c '
 import json
 u = json.load(open("/shared/.setup-complete"))["admin_user"]
 print(u.lstrip("@").split(":", 1)[0])
@@ -341,7 +341,7 @@ curl -s -o "${WRONG_BODY}" -X POST http://127.0.0.1:8088/login \
 rm -f "${WRONG_BODY}"
 
 step "wizard /login: correct admin password issues a cookie"
-LIVE_ADMIN_PW="$(docker exec pureprivacy-wizard python3 -c '
+LIVE_ADMIN_PW="$(docker exec ${WIZARD} python3 -c '
 import json;print(json.load(open("/shared/.setup-complete"))["admin_password"])
 ')"
 COOKIE_JAR="$(mktemp)"
@@ -370,25 +370,25 @@ green "  /login → cookie → /people works end-to-end"
 # Test 5: Recovery key flow
 # =========================================================================
 step "recovery key is in /shared/.setup-complete and hash file"
-RECOVERY="$(docker exec pureprivacy-wizard python3 -c '
+RECOVERY="$(docker exec ${WIZARD} python3 -c '
 import json
 d = json.load(open("/shared/.setup-complete"))
 print(d.get("recovery_passphrase", ""))
 ')"
 [[ -n "${RECOVERY}" ]] || fail "no recovery_passphrase in .setup-complete"
-docker exec pureprivacy-wizard test -f /shared/secrets/recovery_hash \
+docker exec ${WIZARD} test -f /shared/secrets/recovery_hash \
     || fail "recovery_hash file missing"
 green "  recovery key minted (${#RECOVERY} chars), hash on disk"
 
 step "pureprivacy admin reset-password rotates admin password using key"
-OLD_ADMIN_PW="$(docker exec pureprivacy-wizard python3 -c '
+OLD_ADMIN_PW="$(docker exec ${WIZARD} python3 -c '
 import json
 d = json.load(open("/shared/.setup-complete"))
 print(d.get("admin_password", ""))
 ')"
 RESET_OUT="$(./scripts/pureprivacy admin reset-password "${RECOVERY}" 2>&1)"
 [[ "${RESET_OUT}" == *"Reset password for"* ]] || fail "admin reset did not confirm: ${RESET_OUT:0:200}"
-NEW_ADMIN_PW="$(docker exec pureprivacy-wizard python3 -c '
+NEW_ADMIN_PW="$(docker exec ${WIZARD} python3 -c '
 import json
 d = json.load(open("/shared/.setup-complete"))
 print(d.get("admin_password", ""))
@@ -399,12 +399,12 @@ green "  admin password rotated via recovery key"
 step "logging in with the new admin password works"
 LOGIN_HTTP="$(curl -s -o /tmp/login.body -w '%{http_code}' \
     -X POST "http://127.0.0.1:8088/healthz" -o /dev/null) "
-ADMIN_USER="$(docker exec pureprivacy-wizard python3 -c '
+ADMIN_USER="$(docker exec ${WIZARD} python3 -c '
 import json
 print(json.load(open("/shared/.setup-complete"))["admin_user"])
 ')"
 ADMIN_LOCAL="${ADMIN_USER#@}"; ADMIN_LOCAL="${ADMIN_LOCAL%%:*}"
-LOGIN_HTTP="$(docker exec pureprivacy-synapse curl -s -o /tmp/login.body \
+LOGIN_HTTP="$(docker exec ${SYNAPSE} curl -s -o /tmp/login.body \
     -w '%{http_code}' -X POST http://localhost:8008/_matrix/client/r0/login \
     --data-binary "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_LOCAL}\"},\"password\":\"${NEW_ADMIN_PW}\"}")"
 [[ "${LOGIN_HTTP}" == "200" ]] || fail "new admin password did not work for login (HTTP ${LOGIN_HTTP})"

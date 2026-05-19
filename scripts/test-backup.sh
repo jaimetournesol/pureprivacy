@@ -48,11 +48,11 @@ trap cleanup EXIT
 
 step "ensuring stack is up + setup complete"
 ./scripts/pureprivacy up >/dev/null
-docker exec pureprivacy-wizard test -f /shared/.setup-complete \
+docker exec ${WIZARD} test -f /shared/.setup-complete \
     || fail "setup not complete; run scripts/test-e2e.sh first"
 
-ONION_BEFORE="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
-ADMIN_PW_BEFORE="$(docker exec pureprivacy-wizard python3 -c '
+ONION_BEFORE="$(docker exec ${TOR} cat /shared/onion_hostname)"
+ADMIN_PW_BEFORE="$(docker exec ${WIZARD} python3 -c '
 import json
 print(json.load(open("/shared/.setup-complete"))["admin_password"])
 ')"
@@ -110,11 +110,11 @@ step "bringing the stack back up (Synapse cold-start; takes a few minutes)"
 # Step 5: verify pre-backup state survived, post-backup state did not
 # =========================================================================
 step "verifying the round-trip"
-ONION_AFTER="$(docker exec pureprivacy-tor cat /shared/onion_hostname)"
+ONION_AFTER="$(docker exec ${TOR} cat /shared/onion_hostname)"
 [[ "${ONION_AFTER}" == "${ONION_BEFORE}" ]] \
     || fail "onion identity changed: ${ONION_BEFORE} → ${ONION_AFTER}"
 
-ADMIN_PW_AFTER="$(docker exec pureprivacy-wizard python3 -c '
+ADMIN_PW_AFTER="$(docker exec ${WIZARD} python3 -c '
 import json
 print(json.load(open("/shared/.setup-complete"))["admin_password"])
 ')"

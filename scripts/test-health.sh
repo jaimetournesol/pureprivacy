@@ -33,8 +33,8 @@ fail()  { red "FAIL: $*"; exit 1; }
 
 cleanup() {
     # Make sure we don't leave anything paused if the test errors out.
-    docker unpause pureprivacy-postgres >/dev/null 2>&1 || true
-    docker unpause pureprivacy-synapse >/dev/null 2>&1 || true
+    docker unpause ${POSTGRES} >/dev/null 2>&1 || true
+    docker unpause ${SYNAPSE} >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -83,19 +83,19 @@ wait_for_running() {
 # Test 1: pause postgres → healthcheck flips to unhealthy → unpause recovers
 # =========================================================================
 step "Test 1: pausing postgres should drive its healthcheck unhealthy"
-[[ "$(container_health pureprivacy-postgres)" == "healthy" ]] \
+[[ "$(container_health ${POSTGRES})" == "healthy" ]] \
     || fail "postgres not healthy at start"
-docker pause pureprivacy-postgres >/dev/null
+docker pause ${POSTGRES} >/dev/null
 
 # Compose has interval=5s, retries=5 → ~25s to flip.  Allow generous slack.
-if ! wait_for_health pureprivacy-postgres unhealthy 90; then
+if ! wait_for_health ${POSTGRES} unhealthy 90; then
     fail "postgres healthcheck did not detect pause within 90s"
 fi
 green "  postgres flipped to unhealthy after pause"
 
 step "Test 1: unpause → recovery to healthy"
-docker unpause pureprivacy-postgres >/dev/null
-if ! wait_for_health pureprivacy-postgres healthy 60; then
+docker unpause ${POSTGRES} >/dev/null
+if ! wait_for_health ${POSTGRES} healthy 60; then
     fail "postgres did not recover to healthy within 60s after unpause"
 fi
 green "  postgres recovered after unpause"
@@ -129,18 +129,18 @@ green "  every service declares restart: unless-stopped"
 # Ensures the user-facing wait_healthy() helper doesn't hang forever.
 # =========================================================================
 step "Test 3: pureprivacy wait reports failure when a service is unhealthy"
-docker pause pureprivacy-postgres >/dev/null
-if ! wait_for_health pureprivacy-postgres unhealthy 90; then
-    docker unpause pureprivacy-postgres >/dev/null
+docker pause ${POSTGRES} >/dev/null
+if ! wait_for_health ${POSTGRES} unhealthy 90; then
+    docker unpause ${POSTGRES} >/dev/null
     fail "postgres did not flip unhealthy in setup for Test 3"
 fi
 # WAIT_TIMEOUT keeps Test 3 short; the real wait_healthy() defaults to 300s.
 WAIT_OUT="$(WAIT_TIMEOUT=15 ./scripts/pureprivacy wait 2>&1 || true)"
-docker unpause pureprivacy-postgres >/dev/null
+docker unpause ${POSTGRES} >/dev/null
 [[ "${WAIT_OUT}" == *"unhealthy"* ]] || [[ "${WAIT_OUT}" == *"FAILED"* ]] \
     || fail "pureprivacy wait did not surface unhealthy postgres (got: ${WAIT_OUT:0:300})"
 # Wait for recovery so subsequent tests aren't affected.
-wait_for_health pureprivacy-postgres healthy 60 \
+wait_for_health ${POSTGRES} healthy 60 \
     || fail "postgres did not recover for downstream tests"
 green "  pureprivacy wait correctly reported the failure and exited"
 

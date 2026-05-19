@@ -2,6 +2,7 @@ FROM alpine:3.20
 
 RUN apk add --no-cache \
         bash \
+        gettext \
         tor \
         tini
 
@@ -10,7 +11,7 @@ RUN apk add --no-cache \
 # to start.  We chown in the entrypoint because the volume mount may not
 # match at build time.
 
-COPY torrc /etc/tor/torrc
+COPY torrc.tmpl /etc/tor/torrc.tmpl
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 

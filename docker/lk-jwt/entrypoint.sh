@@ -7,7 +7,9 @@
 set -eu
 
 SHARED="${SHARED:-/shared}"
-SYNAPSE_FED_PROXY_IP="${SYNAPSE_FED_PROXY_IP:-172.30.0.13}"
+# Fallback only used when this image is run outside compose; compose
+# always passes the correct IP based on PUREPRIVACY_NET_PREFIX.
+SYNAPSE_FED_PROXY_IP="${SYNAPSE_FED_PROXY_IP:-${PUREPRIVACY_NET_PREFIX:-172.30.0}.13}"
 
 # 1. LiveKit API credentials.
 for _ in $(seq 1 60); do
