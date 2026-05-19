@@ -85,7 +85,32 @@ else
     _host_path() { echo "$1"; }
 fi
 
+# Resolve through symlinks so `pureprivacy` works whether you call it as
+# ./scripts/pureprivacy or via a symlink on $PATH. Prefer GNU readlink
+# (Linux); fall back to Python (macOS / BSD readlink lacks -f); finally
+# the raw path as a last resort.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+    || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
+    || echo "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+
+# Pick up per-instance overrides from .env so a second working copy
+# under a different COMPOSE_PROJECT_NAME / WIZARD_PORT / MCP_PORT
+# behaves correctly when its operator invokes ./scripts/pureprivacy.
+# (docker compose auto-loads .env for compose calls already; this
+# pulls the same values into the script's own shell.)
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${ROOT_DIR}/.env"
+    set +a
+fi
+
 PROJECT="${COMPOSE_PROJECT_NAME:-pureprivacy}"
+WIZARD_PORT="${WIZARD_PORT:-8088}"
+MCP_PORT="${MCP_PORT:-8089}"
+WIZARD_URL="http://127.0.0.1:${WIZARD_PORT}"
+MCP_URL="http://127.0.0.1:${MCP_PORT}"
 # Container names follow `${PROJECT}-${service}` per docker-compose.yml's
 # `container_name:` lines.  Exporting one variable per container lets the
 # script keep its `docker exec ${TOR} …` style without hardcoding the
@@ -103,14 +128,6 @@ LIVEKIT="${PROJECT}-livekit"
 LK_JWT="${PROJECT}-lk-jwt"
 SYNAPSE_FED_PROXY="${PROJECT}-synapse-fed-proxy"
 MCP="${PROJECT}-mcp"
-# Resolve through symlinks so `pureprivacy` works whether you call it as
-# ./scripts/pureprivacy or via a symlink on $PATH. Prefer GNU readlink
-# (Linux); fall back to Python (macOS / BSD readlink lacks -f); finally
-# the raw path as a last resort.
-SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
-    || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
-    || echo "${BASH_SOURCE[0]}")"
-ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
 # Long-running services we monitor for health.  `init` is a one-shot we
 # don't tail because it has no healthcheck and exits 0 on purpose.
 SERVICES=(tor privoxy postgres synapse coturn wizard mcp)
@@ -435,7 +452,7 @@ cmd_status() {
         'table {{.Name}}\t{{.Status}}\t{{.Service}}'
     if [[ "${setup_state}" == "pending" ]]; then
         echo
-        yellow "Setup pending — open http://127.0.0.1:8088"
+        yellow "Setup pending — open ${WIZARD_URL}"
     fi
 }
 
@@ -480,21 +497,21 @@ cmd_info() {
         peers="$(peer_count)"
         bold "Your PurePrivacy box is ready."
         echo "  Onion:        http://${onion}"
-        echo "  Setup info:   http://127.0.0.1:8088  (admin credentials, QR, MCP token)"
+        echo "  Setup info:   ${WIZARD_URL}  (admin credentials, QR, MCP token)"
         if [[ "${peers}" -eq 0 ]]; then
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (no peers paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (no peers paired)"
         elif [[ "${peers}" -eq 1 ]]; then
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (1 peer paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (1 peer paired)"
         else
-            echo "  Pair box:     http://127.0.0.1:8088/pair  (${peers} peers paired)"
+            echo "  Pair box:     ${WIZARD_URL}/pair  (${peers} peers paired)"
         fi
-        echo "  MCP endpoint: http://127.0.0.1:8089/mcp"
+        echo "  MCP endpoint: ${MCP_URL}/mcp"
         if [[ "${livekit_up}" == "true" ]]; then
             echo "  Group voice:  enabled (Tor — via synapse-fed-proxy)"
         fi
     else
         bold "PurePrivacy is up.  Finish setup at:"
-        echo "  http://127.0.0.1:8088"
+        echo "  ${WIZARD_URL}"
         local setup_token
         setup_token="$(docker exec ${WIZARD} cat /shared/secrets/setup_token 2>/dev/null \
             | tr -d '[:space:]' || true)"
@@ -642,7 +659,7 @@ print_setup_summary() {
         echo
     fi
     bold "Agent (MCP)"
-    echo "  Endpoint:    http://127.0.0.1:8089/mcp"
+    echo "  Endpoint:    ${MCP_URL}/mcp"
     if [[ "${include_secrets}" == "true" ]]; then
         echo "  Bearer:      ${mcp_token}"
     else
@@ -651,7 +668,7 @@ print_setup_summary() {
     echo "  Bot user:    ${mcp_user}"
     if [[ "${include_secrets}" == "true" ]]; then
         echo
-        echo "  Claude Code: claude mcp add pureprivacy http://127.0.0.1:8089/mcp \\"
+        echo "  Claude Code: claude mcp add pureprivacy ${MCP_URL}/mcp \\"
         echo "                 --transport http \\"
         echo "                 --header \"Authorization: Bearer ${mcp_token}\""
     fi
@@ -886,7 +903,7 @@ else:
             trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
-                -X POST http://127.0.0.1:8088/pair/accept \
+                -X POST ${WIZARD_URL}/pair/accept \
                 -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
                 --data-urlencode "pair_code=${code}")"
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
@@ -912,7 +929,7 @@ else:
             trap 'rm -f "${body_path}"' EXIT
             local http
             http="$(curl -s -o "${body_path}" -w '%{http_code}' \
-                -X POST http://127.0.0.1:8088/pair/remove \
+                -X POST ${WIZARD_URL}/pair/remove \
                 -H "X-PurePrivacy-CLI-Token: $(cli_token)" \
                 --data-urlencode "onion=${onion}")"
             if [[ "${http}" != "303" ]] && [[ "${http}" != "200" ]]; then
@@ -943,6 +960,7 @@ cmd_init() {
     maybe_help "$@"
     ensure_docker
     local voice="false"
+    local dev="false"
     local admin_user="" admin_password=""
     local non_interactive="false"
     # --verbose: print every secret inline at the end (old behavior).
@@ -952,6 +970,7 @@ cmd_init() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --voice) voice="true"; shift ;;
+            --dev) dev="true"; shift ;;
             --admin-user) admin_user="$2"; shift 2 ;;
             --admin-password) admin_password="$2"; shift 2 ;;
             -y|--yes|--non-interactive) non_interactive="true"; shift ;;
@@ -960,8 +979,11 @@ cmd_init() {
         esac
     done
 
-    if [[ "${voice}" == "true" ]]; then
-        cmd_up --voice
+    local up_args=()
+    [[ "${voice}" == "true" ]] && up_args+=(--voice)
+    [[ "${dev}"   == "true" ]] && up_args+=(--dev)
+    if [[ ${#up_args[@]} -gt 0 ]]; then
+        cmd_up "${up_args[@]}"
     else
         cmd_up
     fi
@@ -980,12 +1002,12 @@ cmd_init() {
     bold "Waiting for the wizard to come online..."
     local deadline=$((SECONDS + 120))
     while [[ ${SECONDS} -lt ${deadline} ]]; do
-        if curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+        if curl -fsS ${WIZARD_URL}/healthz >/dev/null 2>&1; then
             break
         fi
         sleep 2
     done
-    if ! curl -fsS http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+    if ! curl -fsS ${WIZARD_URL}/healthz >/dev/null 2>&1; then
         red "Wizard did not come online within 120s.  Run \`pureprivacy logs wizard\`."
         exit 1
     fi
@@ -1062,7 +1084,7 @@ PY
     trap 'rm -f "${body_path}"' EXIT
     local code
     code="$(curl -s -o "${body_path}" -w '%{http_code}' \
-        -X POST http://127.0.0.1:8088/setup \
+        -X POST ${WIZARD_URL}/setup \
         --data-urlencode "setup_token=${setup_token}" \
         --data-urlencode "admin_username=${admin_user}" \
         --data-urlencode "admin_password=${admin_password}")"
@@ -1129,11 +1151,11 @@ cmd_doctor() {
         | head -c 80 || yellow "  unreachable"
     echo
     echo "wizard:"
-    curl -fsS http://127.0.0.1:8088/healthz 2>/dev/null | sed 's/^/  /' \
+    curl -fsS ${WIZARD_URL}/healthz 2>/dev/null | sed 's/^/  /' \
         || yellow "  unreachable"
     echo
     echo "mcp:"
-    curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null | sed 's/^/  /' \
+    curl -fsS ${MCP_URL}/healthz 2>/dev/null | sed 's/^/  /' \
         || yellow "  unreachable"
 }
 
@@ -1172,15 +1194,15 @@ cmd_verify() {
         docker exec ${SYNAPSE} curl -fsS \
             http://localhost:8008/_matrix/client/versions
     check "wizard /healthz" \
-        curl -fsS http://127.0.0.1:8088/healthz
+        curl -fsS ${WIZARD_URL}/healthz
     check "mcp /healthz" \
-        curl -fsS http://127.0.0.1:8089/healthz
+        curl -fsS ${MCP_URL}/healthz
 
     if setup_complete; then
         check "setup complete" true
         # Bot readiness lives in the MCP /healthz JSON; parse it.
         local bot_ready
-        bot_ready="$(curl -fsS http://127.0.0.1:8089/healthz 2>/dev/null \
+        bot_ready="$(curl -fsS ${MCP_URL}/healthz 2>/dev/null \
             | python3 -c 'import json,sys;d=json.load(sys.stdin);print("ok" if d.get("matrix_bot_ready") else "no")' 2>/dev/null)"
         printf "  %-40s " "mcp bot logged in to synapse"
         if [[ "${bot_ready}" == "ok" ]]; then
@@ -1192,7 +1214,7 @@ cmd_verify() {
         fi
     else
         printf "  %-40s " "setup complete"
-        yellow "pending — run \`pureprivacy init\` or open http://127.0.0.1:8088"
+        yellow "pending — run \`pureprivacy init\` or open ${WIZARD_URL}"
     fi
 
     # Self-resolve the .onion through the box's own Tor SOCKS proxy to prove
